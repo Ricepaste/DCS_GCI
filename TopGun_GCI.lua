@@ -9,6 +9,7 @@ local MERGE_DISTANCE_NM = 5            -- 進入狗戰距離，GCI 自動閉嘴 
 local REPORT_COOLDOWN = 15             -- 每次播報的冷卻時間 (秒)，自動高頻更新
 local LOW_FUEL_THRESHOLD = 0.20        -- 建議 RTB 的最低油量比例 (20%)
 local RADAR_PREFIX = "AWACS"           -- 負責提供情報的友軍雷達/預警機前綴
+local KILL_BOX_NAME = "Kill_Box_Alpha" -- 交戰禁區名稱 (Zone Commander)
 
 -- =========================================================
 -- INTERNAL STATE
@@ -17,6 +18,8 @@ local CheckedInPlayers = {}
 local LastReportTime = {}
 local ClientMenus = {}
 local PlayerRTBNotified = {}
+local CommittedGroups = {}             -- 記錄已下達交戰指令的敵機群
+local KillBoxZone = nil                -- 延遲載入的戰區物件
 
 -- Create MOOSE SETs to track units dynamically
 local SetPlayers = SET_CLIENT:New():FilterCoalitions("blue"):FilterActive():FilterStart()
@@ -37,10 +40,16 @@ end
 
 -- 計算絕對航向 (Track)
 local function GetCardinalDirection(heading)
-    if heading >= 315 or heading < 45 then return "North"
-    elseif heading >= 45 and heading < 135 then return "East"
-    elseif heading >= 135 and heading < 225 then return "South"
-    else return "West" end
+    heading = heading % 360
+    if heading >= 337.5 or heading < 22.5 then return "北"
+    elseif heading >= 22.5 and heading < 67.5 then return "東北"
+    elseif heading >= 67.5 and heading < 112.5 then return "東"
+    elseif heading >= 112.5 and heading < 157.5 then return "東南"
+    elseif heading >= 157.5 and heading < 202.5 then return "南"
+    elseif heading >= 202.5 and heading < 247.5 then return "西南"
+    elseif heading >= 247.5 and heading < 292.5 then return "西"
+    elseif heading >= 292.5 and heading < 337.5 then return "西北"
+    else return "北" end
 end
 
 -- 取得雷達網視野內的目標
@@ -140,10 +149,10 @@ local function BogeyDope(Client)
         
         local Msg = string.format("%s, %s, BRAA %03d, %d, %s, %s, hostile%s.", 
             ClientName, GCI_CALLSIGN, math.floor(ThreatBearing), math.floor(ClosestDist), AltStr, AspectText, TypeStr)
-        MESSAGE:New(Msg, 15, GCI_CALLSIGN):ToClient(Client)
+        MESSAGE:New(Msg, 15, ""):ToGroup(Client:GetGroup())
         LastReportTime[ClientName] = timer.getTime() -- 重置冷卻
     else
-        MESSAGE:New(ClientName .. ", " .. GCI_CALLSIGN .. ", radar is clean. No bogeys detected.", 10, GCI_CALLSIGN):ToClient(Client)
+        MESSAGE:New(ClientName .. ", " .. GCI_CALLSIGN .. ", radar is clean. No bogeys detected.", 10, ""):ToGroup(Client:GetGroup())
     end
 end
 
@@ -176,7 +185,7 @@ local function RequestPicture(Client)
     end)
     
     if #GroupsList == 0 then
-        MESSAGE:New(ClientName .. ", " .. GCI_CALLSIGN .. ", picture is clean.", 10, GCI_CALLSIGN):ToClient(Client)
+        MESSAGE:New(ClientName .. ", " .. GCI_CALLSIGN .. ", picture is clean.", 10, ""):ToClient(Client)
     else
         -- 依照距離由近到遠排序
         table.sort(GroupsList, function(a, b) return a.dist < b.dist end)
@@ -199,19 +208,19 @@ local function RequestPicture(Client)
             
             local GroupNameStr = "Group " .. i
             
-            local TrackText = GetCardinalDirection(math.deg(gData.heading))
+            local TrackText = GetCardinalDirection(gData.heading)
             local EnemyType = GetEnemyTypeIfIdentified(gData.group)
             local TypeStr = EnemyType and (" / " .. EnemyType) or ""
             
             -- DCS 介面是非等寬字體，放棄空白對齊，改用緊湊的斜線 (/) 格式
-            local BraaStr = string.format("%s: BRG %03d / RNG %02d NM / ALT %s / TRK %s / %s / hostile%s", 
-                GroupNameStr, math.floor(gData.bearing), math.floor(gData.dist), AltStr, TrackText, AspectText, TypeStr)
+            local BraaStr = string.format("%s: BRG %03d / RNG %02d NM / ALT %s / TRK %s / hostile%s", 
+                GroupNameStr, math.floor(gData.bearing), math.floor(gData.dist), AltStr, TrackText, TypeStr)
                 
             Msg = Msg .. BraaStr .. "\n"
         end
         
         -- 顯示較長時間 (20秒) 讓玩家有時間閱讀
-        MESSAGE:New(Msg, 20, GCI_CALLSIGN):ToClient(Client)
+        MESSAGE:New(Msg, 20, ""):ToGroup(Client:GetGroup())
     end
 end
 
@@ -255,10 +264,12 @@ CheckIn = function(Client)
     CheckedInPlayers[ClientName] = true
     LastReportTime[ClientName] = 0 
     
-    MESSAGE:New(GCI_CALLSIGN .. ", " .. ClientName .. " checking in as fragged.", 10, ClientName):ToClient(Client)
+    MESSAGE:New(string.format("%s, %s, checking in, as fragged.", GCI_CALLSIGN, ClientName), 10, ClientName):ToGroup(Client:GetGroup())
     
     SCHEDULER:New(nil, function()
-        MESSAGE:New(ClientName .. ", " .. GCI_CALLSIGN .. ". Radar contact, welcome to the show.", 10, GCI_CALLSIGN):ToClient(Client)
+        if Client and Client:IsAlive() then
+            MESSAGE:New(string.format("%s, %s, radar contact.", ClientName, GCI_CALLSIGN), 10, ""):ToGroup(Client:GetGroup())
+        end
     end, {}, 3)
     
     -- 重新載入 F10 選單 (因為狀態已變成 CheckedInPlayers，會自動長出進階選單)
@@ -286,14 +297,81 @@ end
 local function GCILoop()
     local KnownTargets = GetKnownTargets()
 
+    -- 1. [Zone Commander] Kill Box 全局交戰指令邏輯
+    if KILL_BOX_NAME ~= "DISABLED" and not KillBoxZone then 
+        local ok, result = pcall(function() return ZONE:New(KILL_BOX_NAME) end)
+        if ok and result then 
+            KillBoxZone = result 
+        else
+            -- 嘗試抓取多邊形區域
+            if ZONE_POLYGON then
+                local ok2, result2 = pcall(function() return ZONE_POLYGON:NewFromZoneName(KILL_BOX_NAME) end)
+                if ok2 and result2 then KillBoxZone = result2 end
+            end
+        end
+        
+        if not KillBoxZone then
+            env.error("GCI WARNING: Kill Box Zone '" .. KILL_BOX_NAME .. "' not found in Mission Editor!")
+            KILL_BOX_NAME = "DISABLED"
+        end
+    end
+    
+    if KillBoxZone then
+        SetEnemies:ForEachGroupAlive(function(EnemyGroup)
+            local GroupName = EnemyGroup:GetName()
+            if CommittedGroups[GroupName] then return end
+            -- 必須被我方雷達發現才能下令
+            if not KnownTargets[GroupName] then return end
+            
+            local EnemyCoord = EnemyGroup:GetCoordinate()
+            if EnemyCoord and KillBoxZone:IsCoordinateInZone(EnemyCoord) then
+                local C_Dist = 999999
+                local C_Player = nil
+                SetPlayers:ForEachClient(function(C)
+                    if C:IsAlive() then
+                        local CCoord = C:GetCoordinate()
+                        if CCoord then
+                            local d = CCoord:Get2DDistance(EnemyCoord) * 0.000539957
+                            if d < C_Dist then C_Dist = d; C_Player = C end
+                        end
+                    end
+                end)
+                
+                if C_Player then
+                    local PCoord = C_Player:GetCoordinate()
+                    local PName = C_Player:GetPlayerName() or C_Player:GetCallsign() or C_Player:GetName()
+                    local TBearing = PCoord:HeadingTo(EnemyCoord)
+                    local TAlt = EnemyCoord:GetY() * 3.28084
+                    local AltStr = ""
+                    if TAlt < 1000 then AltStr = "on the deck"
+                    else AltStr = string.format("%d thousand", math.floor(TAlt / 1000)) end
+                    
+                    local Msg = string.format("%s, %s, hostile group crossing into Kill Box. BRAA %03d, %d, %s. COMMIT!", 
+                        PName, GCI_CALLSIGN, math.floor(TBearing), math.floor(C_Dist), AltStr)
+                    
+                    -- 重複發送 3 次，每次間隔 4 秒，使用相同分類名稱 ("CommitOrder") 會產生閃爍覆蓋效果，非常引人注意
+                    for i = 0, 2 do
+                        TIMER:New(function()
+                            -- 確保玩家還活著才發送
+                            if C_Player and C_Player:IsAlive() then
+                                MESSAGE:New(Msg, 10, "CommitOrder"):ToGroup(C_Player:GetGroup())
+                            end
+                        end):Start(i * 4)
+                    end
+                    
+                    CommittedGroups[GroupName] = true
+                end
+            end
+        end)
+    end
+
+    -- 2. 玩家個人 BRAA 與油量監控
     SetPlayers:ForEachClient(function(Client)
         if not Client:IsAlive() then return end
         local ClientName = Client:GetPlayerName() or Client:GetCallsign() or Client:GetName()
         if not CheckedInPlayers[ClientName] then return end 
         
         local TimeNow = timer.getTime()
-        if LastReportTime[ClientName] and (TimeNow - LastReportTime[ClientName] < REPORT_COOLDOWN) then return end
-        
         local IsBingo, IsWinchester = false, false
         local fuelFrac = Client:GetFuel()
         if fuelFrac and fuelFrac < LOW_FUEL_THRESHOLD then IsBingo = true end
@@ -323,7 +401,7 @@ local function GCILoop()
                 elseif IsBingo then reason = "bingo fuel" end
                 
                 local Msg = string.format("%s, %s, you are %s. Recommend immediate RTB.", ClientName, GCI_CALLSIGN, reason)
-                MESSAGE:New(Msg, 15, GCI_CALLSIGN):ToClient(Client)
+                MESSAGE:New(Msg, 15, ""):ToGroup(Client:GetGroup())
                 PlayerRTBNotified[ClientName] = true
             end
             -- 注意：這裡不加上 return，讓腳本繼續往下執行威脅掃描與 BRAA 播報
@@ -341,6 +419,7 @@ local function GCILoop()
             if not KnownTargets[EnemyGroup:GetName()] then return end
             
             local EnemyCoord = EnemyGroup:GetCoordinate()
+            
             local DistNM = PlayerCoord:Get2DDistance(EnemyCoord) * 0.000539957
             
             if DistNM <= ALERT_DISTANCE_NM and DistNM > MERGE_DISTANCE_NM then
@@ -372,11 +451,20 @@ local function GCILoop()
             local EnemyType = GetEnemyTypeIfIdentified(PrimaryThreat)
             local TypeStr = EnemyType and (", " .. EnemyType) or ""
             
-            local Msg = string.format("%s, %s, BRAA %03d, %d, %s, %s, hostile%s.", 
-                ClientName, GCI_CALLSIGN, math.floor(ThreatBearing), math.floor(ThreatDist), AltStr, AspectText, TypeStr)
-                
-            MESSAGE:New(Msg, 15, GCI_CALLSIGN):ToClient(Client)
-            LastReportTime[ClientName] = TimeNow
+            local DynamicCooldown = 60
+            if ThreatDist <= 15 then DynamicCooldown = 15
+            elseif ThreatDist <= 30 then DynamicCooldown = 30
+            elseif ThreatDist <= 50 then DynamicCooldown = 45 end
+            
+            local TimeSinceLastReport = TimeNow - (LastReportTime[ClientName] or 0)
+            
+            if TimeSinceLastReport >= DynamicCooldown then
+                local Msg = string.format("%s, %s, BRAA %03d, %d, %s, %s, hostile%s.", 
+                    ClientName, GCI_CALLSIGN, math.floor(ThreatBearing), math.floor(ThreatDist), AltStr, AspectText, TypeStr)
+                    
+                MESSAGE:New(Msg, 15, ""):ToGroup(Client:GetGroup())
+                LastReportTime[ClientName] = TimeNow
+            end
         end
     end)
 end
