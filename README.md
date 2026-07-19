@@ -50,3 +50,22 @@
 ## 🚀 未來擴充計畫 (WIP)
 - [ ] **`TopGun_Ambush.lua` (五代機無縫伏擊)**：目標摧毀後自動 Spawn 五代機進行追殺。
 - [ ] **`TopGun_Bomb.lua` (精準轟炸判定)**：捕捉炸彈落點，判定是否精準命中通風口並計算 3D 誤差距離。
+
+---
+
+## 🧠 DCS AI BVR 外部大腦 (Python + Lua Bridge)
+
+本專案包含一個進階的 AI 決策系統，透過 UDP Sockets 將 DCS 與外部 Python 程式連接，利用「行為樹 (Behavior Tree)」來接管 AI 的 BVR (超視距) 交戰邏輯。
+
+### ⚠️ 環境設定要求 (De-sanitization)
+為了讓 DCS 能夠使用 UDP Sockets 傳送遙測資料給 Python，**必須解除 DCS 的 Lua 沙盒限制**：
+1. 進入你的 DCS 安裝目錄（例如：`C:\Program Files\Eagle Dynamics\DCS World OpenBeta`）。
+2. 用文字編輯器打開 `Scripts/MissionScripting.lua`。
+3. 找到檔案底部的 `sanitizeModule('os')`, `sanitizeModule('io')`, `sanitizeModule('lfs')`, `sanitizeModule('require')`, `sanitizeModule('loadlib')`, `sanitizeModule('package')`。
+4. 在 `require` 和 `package` 這兩行前面加上 `--` 進行註解（變成 `--sanitizeModule('require')` 和 `--sanitizeModule('package')`）。
+5. 存檔後重開 DCS。
+
+### 如何使用 (How to use)
+1. **Python 端**：進入 `python_brain` 資料夾，安裝依賴 `pip install -r requirements.txt`，並執行 `python main.py`。
+2. **DCS 端**：在任務編輯器中，像掛載其他模組一樣，掛載 `TopGun_AILogic.lua`。
+3. 當任務開始後，DCS 會將 AI 的狀態傳給 Python，Python 會計算出戰術動作（如 Crank, Pump）並傳回 DCS 執行。
