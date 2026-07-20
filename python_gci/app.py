@@ -2,7 +2,7 @@ import sys
 import os
 import math
 from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap, QImage
 from PyQt6.QtCore import Qt, QTimer, QPointF
 from backend import GCIBackend
 from geometry import calculate_braa, calculate_speed, to_dms, sync_ordered_selection
@@ -51,38 +51,37 @@ class RadarView(QGraphicsView):
                         
         self.draw_airbases()
         
-        # --- 繪製海洋填色 (若存在) ---
-        sea_path = os.path.join(os.path.dirname(__file__), "sea.csv")
-        if os.path.exists(sea_path):
-            sea_brush = QBrush(QColor(10, 25, 40)) # 幽暗深海藍
-            sea_pen = QPen(Qt.PenStyle.NoPen)
-            with open(sea_path, "r") as f:
-                for line in f:
-                    if line.strip():
-                        parts = line.split(',')
-                        if len(parts) >= 2:
-                            cx, cz = float(parts[0]), float(parts[1])
-                            sx, sy = self.dcs_to_scene(cx, cz)
-                            # 實體 8000x8000 公尺的海水方塊，不設 IgnoreTransformations 讓它可縮放拼貼成一大片
-                            pt = self.scene.addRect(sx - 4000, sy - 4000, 8000, 8000, sea_pen, sea_brush)
-                            pt.setZValue(-30)
-        
-        # --- 繪製海岸線 (若存在) ---
+        # --- 繪製海洋填色與海岸線 ---
         coastline_path = os.path.join(os.path.dirname(__file__), "coastline.csv")
+        sea_seed_path = os.path.join(os.path.dirname(__file__), "sea_seed.csv")
+        
+        coast_pts = []
         if os.path.exists(coastline_path):
-            coast_brush = QBrush(QColor(80, 150, 150)) # 提高亮度的青藍色
             with open(coastline_path, "r") as f:
                 for line in f:
                     if line.strip():
                         parts = line.split(',')
                         if len(parts) == 2:
-                            cx, cz = float(parts[0]), float(parts[1])
-                            sx, sy = self.dcs_to_scene(cx, cz)
-                            # 畫一個固定大小 2x2 像素的點
-                            pt = self.scene.addRect(-1, -1, 2, 2, QPen(Qt.PenStyle.NoPen), coast_brush)
-                            pt.setPos(sx, sy)
-                            pt.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
-                            pt.setZValue(-20)
+                            coast_pts.append((float(parts[0]), float(parts[1])))
+                            
+        seeds = []
+        if os.path.exists(sea_seed_path):
+            with open(sea_seed_path, "r") as f:
+                for line in f:
+                    if line.strip():
+                        parts = line.split(',')
+                        if len(parts) == 2:
+                            seeds.append((float(parts[0]), float(parts[1])))
+                            
+        if coast_pts:
+            # 獨立繪製海岸線以維持無視窗縮放比例的銳利度
+            coast_brush = QBrush(QColor(80, 150, 150)) # 提高亮度的青藍色
+            for cx, cz in coast_pts:
+                sx, sy = self.dcs_to_scene(cx, cz)
+                pt = self.scene.addRect(-1, -1, 2, 2, QPen(Qt.PenStyle.NoPen), coast_brush)
+                pt.setPos(sx, sy)
+                pt.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+                pt.setZValue(-20)
             
         self.scene.selectionChanged.connect(self.on_selection_changed)
         

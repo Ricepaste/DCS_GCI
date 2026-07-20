@@ -37,8 +37,8 @@ local function export_map_data()
         min_x, max_x, min_z, max_z = -500000, 500000, -500000, 500000
     end
     
-    -- 向外擴充 200 公里 (200,000 公尺) 以涵蓋外海與偏遠海岸
-    local padding = 200000
+    -- 向外擴充 1500 公里 (1,500,000 公尺) 以涵蓋整個黑海與周邊所有海域
+    local padding = 1500000
     min_x = min_x - padding
     max_x = max_x + padding
     min_z = min_z - padding
@@ -73,10 +73,21 @@ local function export_map_data()
     local coast_count = 0
     local coast_buffer = "COASTLINE_PT:"
     local coast_buf_count = 0
+    local sea_seeds = {}
     
     for x = max_x, min_x, -step do
         for z = min_z, max_z, step do
             if is_open_ocean(x, z) then
+                local is_new_seed = true
+                for _, seed in ipairs(sea_seeds) do
+                    if math.abs(seed.x - x) < 50000 and math.abs(seed.z - z) < 50000 then
+                        is_new_seed = false
+                        break
+                    end
+                end
+                if is_new_seed then
+                    table.insert(sea_seeds, {x=x, z=z})
+                end
                 if not is_water(x+step, z) or not is_water(x-step, z) or not is_water(x, z+step) or not is_water(x, z-step) then
                     coast_buffer = coast_buffer .. string.format("%d,%d;", x, z)
                     coast_buf_count = coast_buf_count + 1
@@ -93,30 +104,12 @@ local function export_map_data()
     end
     if coast_buf_count > 0 then env.info(coast_buffer) end
     
-    -- 3. 掃描海洋填色區域 (降低解析度以節省效能)
-    local sea_step = 8000
-    local sea_count = 0
-    local sea_buffer = "SEA_PT:"
-    local sea_buf_count = 0
-    
-    for x = max_x, min_x, -sea_step do
-        for z = min_z, max_z, sea_step do
-            if is_open_ocean(x, z) then
-                sea_buffer = sea_buffer .. string.format("%d,%d;", x, z)
-                sea_buf_count = sea_buf_count + 1
-                sea_count = sea_count + 1
-                
-                if sea_buf_count >= 200 then
-                    env.info(sea_buffer)
-                    sea_buffer = "SEA_PT:"
-                    sea_buf_count = 0
-                end
-            end
-        end
+    for _, seed in ipairs(sea_seeds) do
+        env.info(string.format("SEA_SEED:%d,%d", seed.x, seed.z))
     end
-    if sea_buf_count > 0 then env.info(sea_buffer) end
     
-    env.info(string.format("=== DCS MAP DATA EXPORT END | Airbases: %d, Coastline: %d, Sea: %d ===", airbase_count, coast_count, sea_count))
+    env.info(string.format("=== DCS MAP DATA EXPORT END | Airbases: %d, Coastline: %d ===", airbase_count, coast_count))
+    
 end
 
 export_map_data()
