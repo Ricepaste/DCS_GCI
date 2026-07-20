@@ -1,7 +1,7 @@
 import sys
 import os
 import math
-from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton
+from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap, QImage
 from PyQt6.QtCore import Qt, QTimer, QPointF
 from backend import GCIBackend
@@ -95,12 +95,11 @@ class RadarView(QGraphicsView):
         self.intercept_line.setZValue(20)
         self.intercept_line.hide()
         
-        self.intercept_text = self.scene.addText("")
-        self.intercept_text.setDefaultTextColor(QColor(255, 255, 0))
-        self.intercept_text.setFont(QFont("Consolas", 12, QFont.Weight.Bold))
-        self.intercept_text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
-        self.intercept_text.setZValue(20)
-        self.intercept_text.hide()
+        # OSD: BRAA 面板 (固定於畫面角落)
+        self.osd_braa = QLabel(self)
+        self.osd_braa.setStyleSheet("color: yellow; font-family: Consolas; font-size: 14px; background-color: rgba(0, 0, 0, 150); padding: 5px; border-radius: 5px;")
+        self.osd_braa.setText("")
+        self.osd_braa.hide()
         
         self.scale(0.01, 0.01)
         
@@ -108,6 +107,11 @@ class RadarView(QGraphicsView):
         self.timer.timeout.connect(self.update_tracks)
         self.timer.start(100)
         
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # 固定在左下角，留出 20px 邊距
+        self.osd_braa.move(20, self.viewport().height() - self.osd_braa.height() - 20)
+
     def wheelEvent(self, event):
         zoomInFactor = 1.15
         zoomOutFactor = 1 / zoomInFactor
@@ -229,15 +233,14 @@ class RadarView(QGraphicsView):
             braa = calculate_braa(f, h)
             info = f"BRAA:\nBRG: {braa['bearing']:03d}°\nRNG: {braa['range']} NM\nALT: FL{braa['altitude']//100:03d}\nASP: {braa['aspect']}"
             
-            # 顯示在連線中點
-            mid_x = (fsx + hsx) / 2
-            mid_y = (fsy + hsy) / 2
-            self.intercept_text.setPos(mid_x, mid_y)
-            self.intercept_text.setPlainText(info)
-            self.intercept_text.show()
+            # 顯示在 OSD 面板上
+            self.osd_braa.setText(info)
+            self.osd_braa.adjustSize()
+            self.osd_braa.move(20, self.viewport().height() - self.osd_braa.height() - 20)
+            self.osd_braa.show()
         else:
             self.intercept_line.hide()
-            self.intercept_text.hide()
+            self.osd_braa.hide()
 
     def _update_single_track(self, data, color, is_hostile):
         name = data['unit_name']
