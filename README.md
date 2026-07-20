@@ -53,12 +53,12 @@
 
 ---
 
-## 🧠 DCS AI BVR 外部大腦 (Python + Lua Bridge)
+## 📡 DCS 外部戰場監控系統 (External GCI)
 
-本專案包含一個進階的 AI 決策系統，透過 UDP Sockets 將 DCS 與外部 Python 程式連接，利用「行為樹 (Behavior Tree)」來接管 AI 的 BVR (超視距) 交戰邏輯。
+本專案包含一個外部的戰場管制 (GCI) 雷達介面，透過 UDP Sockets 將 DCS 遊戲內的雷達偵測資料即時傳送到外部 Python 程式，提供一個現代化、無黑箱、且具備真實雷達死角模擬的 GCI 介面。
 
 ### ⚠️ 環境設定要求 (De-sanitization)
-為了讓 DCS 能夠使用 UDP Sockets 傳送遙測資料給 Python，**必須解除 DCS 的 Lua 沙盒限制**：
+為了讓 DCS 能夠使用 UDP Sockets 傳送遙測資料給 Python，**必須解除 DCS 的 Lua 沙盒限制**（因為腳本需要使用 `require("socket")`）：
 1. 進入你的 DCS 安裝目錄（例如：`C:\Program Files\Eagle Dynamics\DCS World OpenBeta`）。
 2. 用文字編輯器打開 `Scripts/MissionScripting.lua`。
 3. 找到檔案底部的 `sanitizeModule('os')`, `sanitizeModule('io')`, `sanitizeModule('lfs')`, `sanitizeModule('require')`, `sanitizeModule('loadlib')`, `sanitizeModule('package')`。
@@ -66,6 +66,11 @@
 5. 存檔後重開 DCS。
 
 ### 如何使用 (How to use)
-1. **Python 端**：進入 `python_brain` 資料夾，安裝依賴 `pip install -r requirements.txt`，並執行 `python main.py`。
-2. **DCS 端**：在任務編輯器中，像掛載其他模組一樣，掛載 `TopGun_AILogic.lua`。
-3. 當任務開始後，DCS 會將 AI 的狀態傳給 Python，Python 會計算出戰術動作（如 Crank, Pump）並傳回 DCS 執行。
+1. **Python 端 (雷達介面)**：
+   - 進入 `python_gci` 資料夾。
+   - 安裝依賴庫：`pip install -r requirements.txt` (需要 PyQt6)。
+   - 啟動雷達介面：`python app.py`。
+2. **DCS 端 (資料匯出)**：
+   - 在任務編輯器中，利用 `DO SCRIPT FILE` 掛載 `External_GCI_Exporter.lua`。
+   - **注意：** 你的藍軍必須要有雷達單位 (如 AWACS 或 EWR 預警雷達)，因為本腳本強調真實性，只會將「藍軍雷達實際偵測到的目標」匯出到 Python GCI 介面上。
+3. 任務開始後，切換到 Python 視窗，你就能在深色雷達螢幕上即時看到友軍與敵軍的動態航跡了！
