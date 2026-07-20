@@ -250,13 +250,7 @@ class RadarView(QGraphicsView):
         speed_kts = calculate_speed(data['vx'], data['vz'])
         alt_kft = int((data['y'] * 3.28084) / 1000)
         
-        lat_lon_str = ""
-        if 'lat' in data and 'lon' in data:
-            lat_deg = math.degrees(data['lat'])
-            lon_deg = math.degrees(data['lon'])
-            lat_lon_str = f"<br>{to_dms(lat_deg, True)} {to_dms(lon_deg, False)}"
-
-        label_html = f"{name}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS{lat_lon_str}"
+        label_html = f"{name}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS"
         
         if name not in self.track_items:
             size = 6
