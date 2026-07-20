@@ -25,6 +25,9 @@ class RadarView(QGraphicsView):
         self.checked_in_tracks = set() # 儲存已報到的友軍名單
         self.ordered_selection = []    # 儲存點擊順序，以便區分 BRAA 的起點與終點
         
+        self.show_airbases = True
+        self.airbase_items = []
+        
         # 內建的高加索主要機場 (備用)
         self.airbases = {
             "Batumi": {"x": -233180, "z": 207399, "course": 0},
@@ -137,6 +140,13 @@ class RadarView(QGraphicsView):
             text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
             text_item.setZValue(-1)
             
+            self.airbase_items.extend([runway_item, text_item])
+            
+    def toggle_airbases(self):
+        self.show_airbases = not self.show_airbases
+        for item in self.airbase_items:
+            item.setVisible(self.show_airbases)
+            
     def on_selection_changed(self):
         current_selected = self.scene.selectedItems()
         current_names = []
@@ -181,6 +191,8 @@ class RadarView(QGraphicsView):
                 self.scene.removeItem(items['icon'])
                 self.scene.removeItem(items['line'])
                 self.scene.removeItem(items['text'])
+                for dot in items.get('history_dots', []):
+                    self.scene.removeItem(dot)
 
         # 自動置中於第一個友軍 (僅執行一次)
         if not hasattr(self, 'has_centered') and tracks['friendlies']:
@@ -273,11 +285,35 @@ class RadarView(QGraphicsView):
             text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
             text.setZValue(15)
             
-            self.track_items[name] = {'icon': icon, 'line': line, 'text': text, 'is_hostile': is_hostile}
+            self.track_items[name] = {'icon': icon, 'line': line, 'text': text, 'history_dots': [], 'is_hostile': is_hostile}
         
         items = self.track_items[name]
         items['icon'].setPos(sx, sy)
         
+        # 繪製歷史殘影 (Track Trails)
+        history_points = data.get('history', [])
+        # 確保殘影數量正確，多餘的刪除，不足的補上
+        while len(items['history_dots']) > len(history_points):
+            dot = items['history_dots'].pop()
+            self.scene.removeItem(dot)
+            
+        while len(items['history_dots']) < len(history_points):
+            dot = self.scene.addEllipse(-2, -2, 4, 4, QPen(Qt.PenStyle.NoPen), QBrush(color))
+            dot.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            dot.setZValue(4)
+            items['history_dots'].append(dot)
+            
+        # 更新殘影位置與透明度
+        for i, (hx, hz) in enumerate(history_points):
+            hsx, hsy = self.dcs_to_scene(hx, hz)
+            dot = items['history_dots'][i]
+            dot.setPos(hsx, hsy)
+            # 越舊的點越透明
+            alpha = int(255 * (i + 1) / len(history_points)) * 0.7
+            dot_color = QColor(color)
+            dot_color.setAlpha(int(alpha))
+            dot.setBrush(QBrush(dot_color))
+            
         # 動態更新文字與連線顏色 (可能因為右鍵報到而改變)
         items['text'].setDefaultTextColor(color)
         
@@ -323,7 +359,14 @@ class GCIMainWindow(QMainWindow):
         self.btn_mark.setFixedSize(40, 40)
         self.btn_mark.clicked.connect(self.radar.toggle_selected_friendly)
         
+        self.btn_toggle_airbases = QPushButton()
+        self.btn_toggle_airbases.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon))
+        self.btn_toggle_airbases.setToolTip("顯示/隱藏機場與跑道 (Declutter)")
+        self.btn_toggle_airbases.setFixedSize(40, 40)
+        self.btn_toggle_airbases.clicked.connect(self.radar.toggle_airbases)
+        
         sidebar.addWidget(self.btn_mark)
+        sidebar.addWidget(self.btn_toggle_airbases)
         sidebar.addStretch()
         
         layout.addLayout(sidebar)

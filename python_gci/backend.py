@@ -17,6 +17,7 @@ class GCIBackend:
         self.friendlies = {}
         self.hostiles = {}
         self.airbases = []
+        self.history = {} # unit_name -> list of (x, z) tuples
         self.last_update_time = time.time()
         
         self.lock = threading.Lock()
@@ -53,10 +54,26 @@ class GCIBackend:
             self.hostiles.clear()
             
             for f in telemetry.get("friendlies", []):
-                self.friendlies[f.get("unit_name")] = f
+                uid = f.get("unit_name")
+                if uid not in self.history:
+                    self.history[uid] = []
+                f['history'] = list(self.history[uid])
+                self.friendlies[uid] = f
+                # Append current position for the next sweep
+                self.history[uid].append((f.get("x", 0), f.get("z", 0)))
+                if len(self.history[uid]) > 10:
+                    self.history[uid].pop(0)
                 
             for h in telemetry.get("hostiles", []):
-                self.hostiles[h.get("unit_name")] = h
+                uid = h.get("unit_name")
+                if uid not in self.history:
+                    self.history[uid] = []
+                h['history'] = list(self.history[uid])
+                self.hostiles[uid] = h
+                # Append current position for the next sweep
+                self.history[uid].append((h.get("x", 0), h.get("z", 0)))
+                if len(self.history[uid]) > 10:
+                    self.history[uid].pop(0)
                 
             self.airbases = telemetry.get("airbases", [])
                 
