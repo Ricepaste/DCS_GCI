@@ -1,9 +1,11 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF
+import os
+import math
+from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap
 from PyQt6.QtCore import Qt, QTimer, QPointF
 from backend import GCIBackend
-from geometry import calculate_braa
+from geometry import calculate_braa, calculate_speed, to_dms, sync_ordered_selection
 
 class RadarView(QGraphicsView):
     def __init__(self, backend):
@@ -20,6 +22,69 @@ class RadarView(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         
         self.track_items = {}
+        self.checked_in_tracks = set() # 儲存已報到的友軍名單
+        self.ordered_selection = []    # 儲存點擊順序，以便區分 BRAA 的起點與終點
+        
+        # 內建的高加索主要機場 (備用)
+        self.airbases = {
+            "Batumi": {"x": -233180, "z": 207399, "course": 0},
+            "Kobuleti": {"x": -197274, "z": 226815, "course": 0},
+            "Senaki": {"x": -118501, "z": 241643, "course": 0},
+            "Kutaisi": {"x": -123305, "z": 286348, "course": 0},
+            "Vaziani": {"x": -99665, "z": 503117, "course": 0},
+            "Beslan": {"x": 139178, "z": 435017, "course": 0},
+            "Mozdok": {"x": 232049, "z": 462529, "course": 0},
+            "Min Vody": {"x": 269781, "z": 272828, "course": 0},
+        }
+        
+        # 嘗試讀取匯出的 airbases.csv (覆蓋內建名單)
+        airbases_path = os.path.join(os.path.dirname(__file__), "airbases.csv")
+        if os.path.exists(airbases_path):
+            self.airbases = {}
+            with open(airbases_path, "r", encoding='utf-8') as f:
+                for line in f:
+                    parts = line.strip().split(',')
+                    if len(parts) >= 3:
+                        name, bx, bz = parts[0], float(parts[1]), float(parts[2])
+                        course = float(parts[3]) if len(parts) >= 4 else 0
+                        self.airbases[name] = {"x": bx, "z": bz, "course": course}
+                        
+        self.draw_airbases()
+        
+        # --- 繪製海洋填色 (若存在) ---
+        sea_path = os.path.join(os.path.dirname(__file__), "sea.csv")
+        if os.path.exists(sea_path):
+            sea_brush = QBrush(QColor(10, 25, 40)) # 幽暗深海藍
+            sea_pen = QPen(Qt.PenStyle.NoPen)
+            with open(sea_path, "r") as f:
+                for line in f:
+                    if line.strip():
+                        parts = line.split(',')
+                        if len(parts) >= 2:
+                            cx, cz = float(parts[0]), float(parts[1])
+                            sx, sy = self.dcs_to_scene(cx, cz)
+                            # 實體 8000x8000 公尺的海水方塊，不設 IgnoreTransformations 讓它可縮放拼貼成一大片
+                            pt = self.scene.addRect(sx - 4000, sy - 4000, 8000, 8000, sea_pen, sea_brush)
+                            pt.setZValue(-30)
+        
+        # --- 繪製海岸線 (若存在) ---
+        coastline_path = os.path.join(os.path.dirname(__file__), "coastline.csv")
+        if os.path.exists(coastline_path):
+            coast_brush = QBrush(QColor(80, 150, 150)) # 提高亮度的青藍色
+            with open(coastline_path, "r") as f:
+                for line in f:
+                    if line.strip():
+                        parts = line.split(',')
+                        if len(parts) == 2:
+                            cx, cz = float(parts[0]), float(parts[1])
+                            sx, sy = self.dcs_to_scene(cx, cz)
+                            # 畫一個固定大小 2x2 像素的點
+                            pt = self.scene.addRect(-1, -1, 2, 2, QPen(Qt.PenStyle.NoPen), coast_brush)
+                            pt.setPos(sx, sy)
+                            pt.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+                            pt.setZValue(-20)
+            
+        self.scene.selectionChanged.connect(self.on_selection_changed)
         
         # 攔截線與文字
         self.intercept_line = self.scene.addLine(0, 0, 0, 0, QPen(QColor(255, 255, 0), 0, Qt.PenStyle.DashLine))
@@ -51,6 +116,46 @@ class RadarView(QGraphicsView):
     def dcs_to_scene(self, x, z):
         return z, -x
 
+    def draw_airbases(self):
+        for name, pos in self.airbases.items():
+            sx, sy = self.dcs_to_scene(pos['x'], pos['z'])
+            
+            # 機場標誌：代表跑道的長條示意圖
+            runway_item = self.scene.addRect(-3, -10, 6, 20, QPen(Qt.PenStyle.NoPen), QBrush(QColor(180, 180, 180))) # 淺灰色
+            runway_item.setPos(sx, sy)
+            # 依據機場跑道真實方位旋轉 (DCS course 為標準數學角度，需加上負號轉為 Qt 螢幕的順時針角度)
+            course_deg = pos.get('course', 0)
+            runway_item.setRotation(-course_deg)
+            runway_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            runway_item.setZValue(-1)
+            
+            # 機場文字
+            text_item = self.scene.addText(name, QFont("Consolas", 8))
+            text_item.setDefaultTextColor(QColor(150, 150, 150))
+            text_item.setPos(sx + 8, sy - 10)
+            text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            text_item.setZValue(-1)
+            
+    def on_selection_changed(self):
+        current_selected = self.scene.selectedItems()
+        current_names = []
+        for name, items in self.track_items.items():
+            if items['icon'] in current_selected:
+                current_names.append(name)
+                
+        self.ordered_selection = sync_ordered_selection(self.ordered_selection, current_names)
+
+    def toggle_selected_friendly(self):
+        # 透過按鈕來切換選中友軍的標記狀態
+        for name, items in self.track_items.items():
+            if items['icon'].isSelected() and not items['is_hostile']:
+                if name in self.checked_in_tracks:
+                    self.checked_in_tracks.remove(name)
+                else:
+                    self.checked_in_tracks.add(name)
+        # 立即更新畫面顏色
+        self.update_tracks()
+
     def update_tracks(self):
         tracks = self.backend.get_tracks()
         current_names = set()
@@ -59,7 +164,8 @@ class RadarView(QGraphicsView):
         hostile_data = {}
         
         for f in tracks['friendlies']:
-            self._update_single_track(f, QColor(50, 200, 255), is_hostile=False)
+            color = QColor(50, 255, 50) if f['unit_name'] in self.checked_in_tracks else QColor(50, 200, 255)
+            self._update_single_track(f, color, is_hostile=False)
             current_names.add(f['unit_name'])
             friendly_data[f['unit_name']] = f
             
@@ -83,20 +189,22 @@ class RadarView(QGraphicsView):
             self.has_centered = True
 
         # 處理點擊選取與 BRAA 引導線
-        selected_friendlies = []
-        selected_hostiles = []
-        
-        for name, items in self.track_items.items():
-            if items['icon'].isSelected():
-                if items['is_hostile']:
-                    selected_hostiles.append(hostile_data[name])
-                else:
-                    selected_friendlies.append(friendly_data[name])
+        # 我們只過濾目前確實還處於 selected 狀態的項目，避免不同步
+        valid_selected = []
+        for name in self.ordered_selection:
+            if name in self.track_items and self.track_items[name]['icon'].isSelected():
+                if name in friendly_data:
+                    valid_selected.append(friendly_data[name])
+                elif name in hostile_data:
+                    valid_selected.append(hostile_data[name])
                     
-        # 如果恰好選中一個友軍和一個敵軍，畫出攔截線與 BRAA
-        if len(selected_friendlies) == 1 and len(selected_hostiles) == 1:
-            f = selected_friendlies[0]
-            h = selected_hostiles[0]
+        # 更新 ordered_selection 確保只保留有效的
+        self.ordered_selection = [f['unit_name'] for f in valid_selected]
+                    
+        # 如果恰好選中任意兩個目標，畫出連線與 BRAA
+        if len(valid_selected) == 2:
+            # 絕對遵循點擊順序：第一點擊為基準 (起點)，第二點擊為目標 (終點)
+            f, h = valid_selected[0], valid_selected[1]
             
             fsx, fsy = self.dcs_to_scene(f['x'], f['z'])
             hsx, hsy = self.dcs_to_scene(h['x'], h['z'])
@@ -126,8 +234,16 @@ class RadarView(QGraphicsView):
         future_z = data['z'] + data['vz'] * 30
         fsx, fsy = self.dcs_to_scene(future_x, future_z)
         
+        speed_kts = calculate_speed(data['vx'], data['vz'])
         alt_kft = int((data['y'] * 3.28084) / 1000)
-        label_html = f"{name}<br>FL{alt_kft * 10:03d}"
+        
+        lat_lon_str = ""
+        if 'lat' in data and 'lon' in data:
+            lat_deg = math.degrees(data['lat'])
+            lon_deg = math.degrees(data['lon'])
+            lat_lon_str = f"<br>{to_dms(lat_deg, True)} {to_dms(lon_deg, False)}"
+
+        label_html = f"{name}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS{lat_lon_str}"
         
         if name not in self.track_items:
             size = 6
@@ -161,15 +277,20 @@ class RadarView(QGraphicsView):
         items = self.track_items[name]
         items['icon'].setPos(sx, sy)
         
+        # 動態更新文字與連線顏色 (可能因為右鍵報到而改變)
+        items['text'].setDefaultTextColor(color)
+        
         # 被選取時加粗圖示，否則保持原本線寬
         if items['icon'].isSelected():
             selected_pen = QPen(color)
             selected_pen.setWidth(2)
             items['icon'].setPen(selected_pen)
+            items['line'].setPen(selected_pen)
         else:
             normal_pen = QPen(color)
             normal_pen.setWidth(0)
             items['icon'].setPen(normal_pen)
+            items['line'].setPen(normal_pen)
             
         items['line'].setLine(sx, sy, fsx, fsy)
         items['text'].setPos(sx + 10, sy - 10)
@@ -179,10 +300,32 @@ class GCIMainWindow(QMainWindow):
     def __init__(self, backend):
         super().__init__()
         self.setWindowTitle("DCS External GCI (LotATC Lite)")
-        self.resize(1024, 768)
+        self.resize(1200, 800)
         
+        main_widget = QWidget()
+        layout = QHBoxLayout(main_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 雷達主畫面
         self.radar = RadarView(backend)
-        self.setCentralWidget(self.radar)
+        layout.addWidget(self.radar, stretch=1)
+        
+        # 控制面板 (窄邊條)
+        sidebar = QVBoxLayout()
+        sidebar.setContentsMargins(10, 10, 10, 10)
+        
+        from PyQt6.QtWidgets import QStyle
+        self.btn_mark = QPushButton()
+        self.btn_mark.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        self.btn_mark.setToolTip("標記友軍 (Toggle Control) - 點擊友軍後按此按鈕以標記接管狀態")
+        self.btn_mark.setFixedSize(40, 40)
+        self.btn_mark.clicked.connect(self.radar.toggle_selected_friendly)
+        
+        sidebar.addWidget(self.btn_mark)
+        sidebar.addStretch()
+        
+        layout.addLayout(sidebar)
+        self.setCentralWidget(main_widget)
 
 def run_app():
     backend = GCIBackend(host="0.0.0.0")

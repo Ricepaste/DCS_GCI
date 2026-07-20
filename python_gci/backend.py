@@ -16,6 +16,7 @@ class GCIBackend:
         
         self.friendlies = {}
         self.hostiles = {}
+        self.airbases = []
         self.last_update_time = time.time()
         
         self.lock = threading.Lock()
@@ -48,6 +49,8 @@ class GCIBackend:
                     for h in telemetry.get("hostiles", []):
                         self.hostiles[h.get("unit_name")] = h
                         
+                    self.airbases = telemetry.get("airbases", [])
+                        
                     self.last_update_time = time.time()
             except socket.timeout:
                 pass
@@ -61,5 +64,6 @@ class GCIBackend:
             return {
                 "friendlies": list(self.friendlies.values()),
                 "hostiles": list(self.hostiles.values()),
+                "airbases": self.airbases,
                 "stale": time.time() - self.last_update_time > 3.0
             }
