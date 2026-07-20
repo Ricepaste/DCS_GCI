@@ -2,7 +2,7 @@ env.info("External GCI Exporter Loading...")
 
 local UDP_IP = "127.0.0.1"
 local UDP_PORT = 10082
-local UPDATE_INTERVAL = 0.1 -- 10Hz
+local UPDATE_INTERVAL = 4.0 -- 4s (Link 16 / AESA update rate)
 
 -- Setup UDP Socket
 package.path  = package.path..";.\\LuaSocket\\?.lua"

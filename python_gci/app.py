@@ -1,7 +1,7 @@
 import sys
 import os
 import math
-from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton
+from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap, QImage
 from PyQt6.QtCore import Qt, QTimer, QPointF
 from backend import GCIBackend
@@ -24,6 +24,9 @@ class RadarView(QGraphicsView):
         self.track_items = {}
         self.checked_in_tracks = set() # 儲存已報到的友軍名單
         self.ordered_selection = []    # 儲存點擊順序，以便區分 BRAA 的起點與終點
+        
+        self.show_airbases = True
+        self.airbase_items = []
         
         # 內建的高加索主要機場 (備用)
         self.airbases = {
@@ -92,12 +95,11 @@ class RadarView(QGraphicsView):
         self.intercept_line.setZValue(20)
         self.intercept_line.hide()
         
-        self.intercept_text = self.scene.addText("")
-        self.intercept_text.setDefaultTextColor(QColor(255, 255, 0))
-        self.intercept_text.setFont(QFont("Consolas", 12, QFont.Weight.Bold))
-        self.intercept_text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
-        self.intercept_text.setZValue(20)
-        self.intercept_text.hide()
+        # OSD: BRAA 面板 (固定於畫面角落)
+        self.osd_braa = QLabel(self)
+        self.osd_braa.setStyleSheet("color: yellow; font-family: Consolas; font-size: 14px; background-color: rgba(0, 0, 0, 150); padding: 5px; border-radius: 5px;")
+        self.osd_braa.setText("")
+        self.osd_braa.hide()
         
         self.scale(0.01, 0.01)
         
@@ -105,6 +107,11 @@ class RadarView(QGraphicsView):
         self.timer.timeout.connect(self.update_tracks)
         self.timer.start(100)
         
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # 固定在左下角，留出 20px 邊距
+        self.osd_braa.move(20, self.viewport().height() - self.osd_braa.height() - 20)
+
     def wheelEvent(self, event):
         zoomInFactor = 1.15
         zoomOutFactor = 1 / zoomInFactor
@@ -136,6 +143,13 @@ class RadarView(QGraphicsView):
             text_item.setPos(sx + 8, sy - 10)
             text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
             text_item.setZValue(-1)
+            
+            self.airbase_items.extend([runway_item, text_item])
+            
+    def toggle_airbases(self):
+        self.show_airbases = not self.show_airbases
+        for item in self.airbase_items:
+            item.setVisible(self.show_airbases)
             
     def on_selection_changed(self):
         current_selected = self.scene.selectedItems()
@@ -181,6 +195,8 @@ class RadarView(QGraphicsView):
                 self.scene.removeItem(items['icon'])
                 self.scene.removeItem(items['line'])
                 self.scene.removeItem(items['text'])
+                for dot in items.get('history_dots', []):
+                    self.scene.removeItem(dot)
 
         # 自動置中於第一個友軍 (僅執行一次)
         if not hasattr(self, 'has_centered') and tracks['friendlies']:
@@ -217,15 +233,14 @@ class RadarView(QGraphicsView):
             braa = calculate_braa(f, h)
             info = f"BRAA:\nBRG: {braa['bearing']:03d}°\nRNG: {braa['range']} NM\nALT: FL{braa['altitude']//100:03d}\nASP: {braa['aspect']}"
             
-            # 顯示在連線中點
-            mid_x = (fsx + hsx) / 2
-            mid_y = (fsy + hsy) / 2
-            self.intercept_text.setPos(mid_x, mid_y)
-            self.intercept_text.setPlainText(info)
-            self.intercept_text.show()
+            # 顯示在 OSD 面板上
+            self.osd_braa.setText(info)
+            self.osd_braa.adjustSize()
+            self.osd_braa.move(20, self.viewport().height() - self.osd_braa.height() - 20)
+            self.osd_braa.show()
         else:
             self.intercept_line.hide()
-            self.intercept_text.hide()
+            self.osd_braa.hide()
 
     def _update_single_track(self, data, color, is_hostile):
         name = data['unit_name']
@@ -238,13 +253,7 @@ class RadarView(QGraphicsView):
         speed_kts = calculate_speed(data['vx'], data['vz'])
         alt_kft = int((data['y'] * 3.28084) / 1000)
         
-        lat_lon_str = ""
-        if 'lat' in data and 'lon' in data:
-            lat_deg = math.degrees(data['lat'])
-            lon_deg = math.degrees(data['lon'])
-            lat_lon_str = f"<br>{to_dms(lat_deg, True)} {to_dms(lon_deg, False)}"
-
-        label_html = f"{name}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS{lat_lon_str}"
+        label_html = f"{name}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS"
         
         if name not in self.track_items:
             size = 6
@@ -273,11 +282,35 @@ class RadarView(QGraphicsView):
             text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
             text.setZValue(15)
             
-            self.track_items[name] = {'icon': icon, 'line': line, 'text': text, 'is_hostile': is_hostile}
+            self.track_items[name] = {'icon': icon, 'line': line, 'text': text, 'history_dots': [], 'is_hostile': is_hostile}
         
         items = self.track_items[name]
         items['icon'].setPos(sx, sy)
         
+        # 繪製歷史殘影 (Track Trails)
+        history_points = data.get('history', [])
+        # 確保殘影數量正確，多餘的刪除，不足的補上
+        while len(items['history_dots']) > len(history_points):
+            dot = items['history_dots'].pop()
+            self.scene.removeItem(dot)
+            
+        while len(items['history_dots']) < len(history_points):
+            dot = self.scene.addEllipse(-2, -2, 4, 4, QPen(Qt.PenStyle.NoPen), QBrush(color))
+            dot.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            dot.setZValue(4)
+            items['history_dots'].append(dot)
+            
+        # 更新殘影位置與透明度
+        for i, (hx, hz) in enumerate(history_points):
+            hsx, hsy = self.dcs_to_scene(hx, hz)
+            dot = items['history_dots'][i]
+            dot.setPos(hsx, hsy)
+            # 越舊的點越透明
+            alpha = int(255 * (i + 1) / len(history_points)) * 0.7
+            dot_color = QColor(color)
+            dot_color.setAlpha(int(alpha))
+            dot.setBrush(QBrush(dot_color))
+            
         # 動態更新文字與連線顏色 (可能因為右鍵報到而改變)
         items['text'].setDefaultTextColor(color)
         
@@ -323,7 +356,14 @@ class GCIMainWindow(QMainWindow):
         self.btn_mark.setFixedSize(40, 40)
         self.btn_mark.clicked.connect(self.radar.toggle_selected_friendly)
         
+        self.btn_toggle_airbases = QPushButton()
+        self.btn_toggle_airbases.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon))
+        self.btn_toggle_airbases.setToolTip("顯示/隱藏機場與跑道 (Declutter)")
+        self.btn_toggle_airbases.setFixedSize(40, 40)
+        self.btn_toggle_airbases.clicked.connect(self.radar.toggle_airbases)
+        
         sidebar.addWidget(self.btn_mark)
+        sidebar.addWidget(self.btn_toggle_airbases)
         sidebar.addStretch()
         
         layout.addLayout(sidebar)
