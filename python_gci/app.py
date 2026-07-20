@@ -314,6 +314,18 @@ class RadarView(QGraphicsView):
         self.intercept_line.setZValue(20)
         self.intercept_line.hide()
         
+        # 測距尺 (Ruler)
+        self.ruler_line = self.scene.addLine(0, 0, 0, 0, QPen(QColor(180, 255, 180), 0, Qt.PenStyle.DashLine))
+        self.ruler_line.setZValue(30)
+        self.ruler_line.hide()
+        
+        self.ruler_text = self.scene.addText("")
+        self.ruler_text.setFont(QFont("Consolas", 12, QFont.Weight.Bold))
+        self.ruler_text.setDefaultTextColor(QColor(180, 255, 180))
+        self.ruler_text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self.ruler_text.setZValue(30)
+        self.ruler_text.hide()
+        
         # OSD: BRAA 面板 (固定於畫面角落)
         self.osd_braa = QLabel(self)
         self.osd_braa.setStyleSheet("color: yellow; font-family: Consolas; font-size: 14px; background-color: rgba(0, 0, 0, 150); padding: 5px; border-radius: 5px;")
@@ -427,6 +439,15 @@ class RadarView(QGraphicsView):
                 self._is_panning = True
                 self._pan_start = event.position().toPoint()
                 return
+            elif event.button() == Qt.MouseButton.RightButton:
+                self._is_ruler = True
+                self._ruler_start = self.mapToScene(event.position().toPoint())
+                self.ruler_line.setLine(self._ruler_start.x(), self._ruler_start.y(), self._ruler_start.x(), self._ruler_start.y())
+                self.ruler_line.show()
+                self.ruler_text.setPlainText("")
+                self.ruler_text.setPos(self._ruler_start)
+                self.ruler_text.show()
+                return
         super().mousePressEvent(event)
         
     def mouseMoveEvent(self, event):
@@ -436,11 +457,50 @@ class RadarView(QGraphicsView):
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
             self._pan_start = event.position().toPoint()
             return
+        elif getattr(self, '_is_ruler', False):
+            current_pos = self.mapToScene(event.position().toPoint())
+            self.ruler_line.setLine(self._ruler_start.x(), self._ruler_start.y(), current_pos.x(), current_pos.y())
+            
+            scene_dx = current_pos.x() - self._ruler_start.x()
+            scene_dy = current_pos.y() - self._ruler_start.y()
+            
+            # Convert scene back to DCS
+            dcs_dz = scene_dx
+            dcs_dx = -scene_dy
+            
+            # Calculate magnetic declination approximation based on theatre
+            declinations = {
+                "Caucasus": 6.0,
+                "Syria": 5.0,
+                "PersianGulf": 2.0,
+                "Nevada": 11.5,
+                "Marianas": 2.0,
+                "Normandy": -1.0,
+                "TheChannel": -1.0,
+                "Sinai": 4.0,
+            }
+            decl = declinations.get(self.current_theatre, 6.0)
+            
+            dist_nm = math.hypot(dcs_dx, dcs_dz) / 1852.0
+            hdg = math.degrees(math.atan2(dcs_dz, dcs_dx))
+            if hdg < 0: hdg += 360
+            
+            mag_hdg = (hdg - decl) % 360
+            if mag_hdg < 0: mag_hdg += 360
+            
+            self.ruler_text.setPlainText(f"{int(hdg):03d}°T ({int(mag_hdg):03d}°M) / {dist_nm:.1f} NM")
+            self.ruler_text.setPos(current_pos.x() + 15, current_pos.y() - 15)
+            return
         super().mouseMoveEvent(event)
         
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and getattr(self, '_is_panning', False):
             self._is_panning = False
+            return
+        elif event.button() == Qt.MouseButton.RightButton and getattr(self, '_is_ruler', False):
+            self._is_ruler = False
+            self.ruler_line.hide()
+            self.ruler_text.hide()
             return
         super().mouseReleaseEvent(event)
         
