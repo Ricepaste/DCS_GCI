@@ -1,9 +1,9 @@
 import sys
 import os
 import math
-from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QDialog, QFormLayout, QTextEdit
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap, QImage
-from PyQt6.QtCore import Qt, QTimer, QPointF
+from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QDialog, QFormLayout, QTextEdit, QButtonGroup, QLineEdit
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap, QImage, QTransform, QCursor, QIcon
+from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF
 from backend import GCIBackend
 from geometry import calculate_braa, calculate_speed, to_dms, sync_ordered_selection
 
@@ -47,6 +47,27 @@ class AircraftStatusPanel(QDialog):
         header_layout.addWidget(self.btn_close)
         layout.addLayout(header_layout)
         
+        # Classification buttons
+        class_layout = QHBoxLayout()
+        class_layout.setSpacing(5)
+        self.btn_fnd = QPushButton("FND")
+        self.btn_unk = QPushButton("UNK")
+        self.btn_hst = QPushButton("HST")
+        self.btn_bnd = QPushButton("BND")
+        
+        self.class_group = QButtonGroup(self)
+        for i, btn in enumerate([self.btn_fnd, self.btn_unk, self.btn_bnd, self.btn_hst]):
+            btn.setStyleSheet("""
+                QPushButton { background-color: rgba(50,70,70,150); border: 1px solid #558888; color: #a0c0c0; border-radius: 3px; padding: 4px; font-weight: bold; }
+                QPushButton:checked { background-color: #55aaaa; color: black; }
+            """)
+            btn.setCheckable(True)
+            self.class_group.addButton(btn, i)
+            class_layout.addWidget(btn)
+            
+        self.class_group.buttonClicked.connect(self.on_class_changed)
+        layout.addLayout(class_layout)
+        
         grid = QFormLayout()
         grid.setContentsMargins(10, 10, 10, 10)
         grid.setSpacing(8)
@@ -57,6 +78,14 @@ class AircraftStatusPanel(QDialog):
         self.lbl_alt = QLabel()
         self.lbl_spd = QLabel()
         self.lbl_hdg = QLabel()
+        
+        self.edit_weapons = QLineEdit()
+        self.edit_weapons.setPlaceholderText("e.g. 4/2")
+        self.edit_weapons.setStyleSheet("background: rgba(0,0,0,100); color: #e0e0e0; border: 1px solid #336666; border-radius: 3px; padding: 2px;")
+        
+        self.edit_fuel = QLineEdit()
+        self.edit_fuel.setPlaceholderText("e.g. 12000 lbs")
+        self.edit_fuel.setStyleSheet("background: rgba(0,0,0,100); color: #e0e0e0; border: 1px solid #336666; border-radius: 3px; padding: 2px;")
         
         val_style = "color: #e0e0e0; font-size: 14px; font-weight: bold; border: none; background: transparent;"
         for lbl in [self.lbl_callsign, self.lbl_iff, self.lbl_type, self.lbl_alt, self.lbl_spd, self.lbl_hdg]:
@@ -75,6 +104,8 @@ class AircraftStatusPanel(QDialog):
         add_row("ALTITUDE", self.lbl_alt)
         add_row("SPEED", self.lbl_spd)
         add_row("HEADING", self.lbl_hdg)
+        add_row("WEAPONS", self.edit_weapons)
+        add_row("FUEL", self.edit_fuel)
         layout.addLayout(grid)
         
         notes_lbl = QLabel("REMARKS / NOTES")
@@ -84,8 +115,9 @@ class AircraftStatusPanel(QDialog):
         self.notes_edit = QTextEdit()
         self.notes_edit.setStyleSheet("""
             QTextEdit {
-                background-color: rgba(0, 0, 0, 120);
-                border: 1px solid #224444;
+                background-color: rgba(0, 0, 0, 100);
+                border: 1px solid #336666;
+                border-radius: 5px;
                 color: #a0c0c0;
                 font-family: Consolas;
                 font-size: 13px;
@@ -97,7 +129,7 @@ class AircraftStatusPanel(QDialog):
         main_layout.addWidget(self.container)
         
         self.current_unit = None
-        self.global_notes = {}
+        self.global_data = {}
         self._is_dragging = False
         self._drag_pos = None
 
@@ -115,24 +147,49 @@ class AircraftStatusPanel(QDialog):
     def mouseReleaseEvent(self, event):
         self._is_dragging = False
 
-    def update_data(self, data, unit_type_str, is_hostile):
+    def on_class_changed(self, button):
+        if self.current_unit and self.parent():
+            cls_str = button.text()
+            cls = "FRIENDLY"
+            if cls_str == "UNK": cls = "UNKNOWN"
+            elif cls_str == "HST": cls = "HOSTILE"
+            elif cls_str == "BND": cls = "BANDIT"
+            
+            self.parent().set_track_classification(self.current_unit, cls)
+            self.refresh_ui_colors(cls)
+            
+    def refresh_ui_colors(self, cls):
+        if cls == "FRIENDLY": color = "#55ffff"
+        elif cls == "UNKNOWN": color = "#ffff55"
+        elif cls in ["HOSTILE", "BANDIT"]: color = "#ff5555"
+        else: color = "#ffffff"
+        
+        self.lbl_title.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 16px; border: none; background: transparent;")
+        self.lbl_callsign.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+
+    def update_data(self, data, unit_type_str, is_hostile, current_cls):
         name = data['unit_name']
         
         if self.current_unit and self.current_unit != name:
-            self.global_notes[self.current_unit] = self.notes_edit.toPlainText()
-            self.notes_edit.setPlainText(self.global_notes.get(name, ""))
-        elif not self.current_unit:
-            self.notes_edit.setPlainText(self.global_notes.get(name, ""))
+            self.global_data[self.current_unit] = {
+                'notes': self.notes_edit.toPlainText(),
+                'weapons': self.edit_weapons.text(),
+                'fuel': self.edit_fuel.text()
+            }
+            
+        saved = self.global_data.get(name, {'notes': '', 'weapons': '', 'fuel': ''})
+        
+        if self.current_unit != name:
+            self.notes_edit.setPlainText(saved.get('notes', ''))
+            self.edit_weapons.setText(saved.get('weapons', ''))
+            self.edit_fuel.setText(saved.get('fuel', ''))
             
         self.current_unit = name
         
-        color = "#ff5555" if is_hostile else "#55ffff"
         title = f"TRK {name[-4:]}" if len(name) > 4 else "TRK"
         self.lbl_title.setText(title)
-        self.lbl_title.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 16px; border: none; background: transparent;")
         
         self.lbl_callsign.setText(name)
-        self.lbl_callsign.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: bold; border: none; background: transparent;")
         
         if is_hostile:
             self.lbl_iff.setText("NO RESPONSE")
@@ -140,6 +197,15 @@ class AircraftStatusPanel(QDialog):
         else:
             self.lbl_iff.setText("M4/5 VALID")
             self.lbl_iff.setStyleSheet("color: #55ff55; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+            
+        self.class_group.blockSignals(True)
+        if current_cls == "FRIENDLY": self.btn_fnd.setChecked(True)
+        elif current_cls == "UNKNOWN": self.btn_unk.setChecked(True)
+        elif current_cls == "HOSTILE": self.btn_hst.setChecked(True)
+        elif current_cls == "BANDIT": self.btn_bnd.setChecked(True)
+        self.class_group.blockSignals(False)
+        
+        self.refresh_ui_colors(current_cls)
             
         self.lbl_type.setText(unit_type_str)
         
@@ -155,7 +221,11 @@ class AircraftStatusPanel(QDialog):
         
     def closeEvent(self, event):
         if self.current_unit:
-            self.global_notes[self.current_unit] = self.notes_edit.toPlainText()
+            self.global_data[self.current_unit] = {
+                'notes': self.notes_edit.toPlainText(),
+                'weapons': self.edit_weapons.text(),
+                'fuel': self.edit_fuel.text()
+            }
         self.current_unit = None
         super().closeEvent(event)
 
@@ -170,30 +240,24 @@ class RadarView(QGraphicsView):
         self.setBackgroundBrush(QBrush(QColor(10, 20, 15)))
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # 啟用拖曳平移 (允許點擊拖拉)
-        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        # 停用內建拖曳，改為手動拖曳
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        
+        # 隱藏滾動條，保持畫面潔淨
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         
         self.track_items = {}
-        self.checked_in_tracks = set() # 儲存已報到的友軍名單
-        self.ordered_selection = []    # 儲存點擊順序，以便區分 BRAA 的起點與終點
+        self.checked_in_tracks = set()
+        self.ordered_selection = []
+        self.track_classifications = {}
         
-        self.expanded_labels = set()   # 儲存手動展開字卡的友/敵軍
-        self.global_labels_expanded = False # 全局字卡展開狀態
+        self.expanded_labels = set()
+        self.global_labels_expanded = False
         
         self.show_airbases = True
         self.airbase_items = []
-        
-        # 內建的高加索主要機場 (備用)
-        self.airbases = {
-            "Batumi": {"x": -233180, "z": 207399, "course": 0},
-            "Kobuleti": {"x": -197274, "z": 226815, "course": 0},
-            "Senaki": {"x": -118501, "z": 241643, "course": 0},
-            "Kutaisi": {"x": -123305, "z": 286348, "course": 0},
-            "Vaziani": {"x": -99665, "z": 503117, "course": 0},
-            "Beslan": {"x": 139178, "z": 435017, "course": 0},
-            "Mozdok": {"x": 232049, "z": 462529, "course": 0},
-            "Min Vody": {"x": 269781, "z": 272828, "course": 0},
-        }
+        self.airbases = {}
         
         # 決定當前要讀取的地圖資料目錄
         base_dir = os.path.dirname(__file__)
@@ -276,6 +340,43 @@ class RadarView(QGraphicsView):
             zoomFactor = zoomOutFactor
         self.scale(zoomFactor, zoomFactor)
 
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
+        
+        # 繪製動態比例尺 (Scale Bar)
+        painter.save()
+        painter.setTransform(QTransform()) # 切換回 Viewport 螢幕座標系
+        
+        pixels_per_meter = self.transform().m11()
+        if pixels_per_meter > 0:
+            nm_in_meters = 1852.0
+            # 常見比例尺級距 (NM)
+            steps = [1, 2, 5, 10, 20, 50, 100, 200, 500]
+            best_step = 10
+            for step in steps:
+                if step * nm_in_meters * pixels_per_meter >= 60:
+                    best_step = step
+                    break
+            
+            bar_length_px = best_step * nm_in_meters * pixels_per_meter
+            
+            vp_rect = self.viewport().rect()
+            x = vp_rect.width() - bar_length_px - 30
+            y = vp_rect.height() - 30
+            
+            pen = QPen(QColor(180, 255, 180, 200))
+            pen.setWidth(2)
+            painter.setPen(pen)
+            
+            painter.drawLine(QPointF(x, y), QPointF(x + bar_length_px, y))
+            painter.drawLine(QPointF(x, y - 6), QPointF(x, y + 6))
+            painter.drawLine(QPointF(x + bar_length_px, y - 6), QPointF(x + bar_length_px, y + 6))
+            
+            painter.setFont(QFont("Consolas", 10, QFont.Weight.Bold))
+            painter.drawText(QRectF(x, y - 25, bar_length_px, 20), Qt.AlignmentFlag.AlignCenter, f"{best_step} NM")
+            
+        painter.restore()
+
     def dcs_to_scene(self, x, z):
         return z, -x
 
@@ -315,22 +416,51 @@ class RadarView(QGraphicsView):
         item = self.itemAt(event.position().toPoint())
         if item:
             for name, items in self.track_items.items():
-                if item == items['icon'] or item == items['text']:
+                if item == items['icon'] or item == items['text'] or item == items.get('class_text'):
                     if name in self.expanded_labels:
                         self.expanded_labels.remove(name)
                     else:
                         self.expanded_labels.add(name)
                     break
+        else:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._is_panning = True
+                self._pan_start = event.position().toPoint()
+                return
         super().mousePressEvent(event)
+        
+    def mouseMoveEvent(self, event):
+        if getattr(self, '_is_panning', False):
+            delta = event.position().toPoint() - self._pan_start
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            self._pan_start = event.position().toPoint()
+            return
+        super().mouseMoveEvent(event)
+        
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and getattr(self, '_is_panning', False):
+            self._is_panning = False
+            return
+        super().mouseReleaseEvent(event)
         
     def mouseDoubleClickEvent(self, event):
         item = self.itemAt(event.position().toPoint())
         if item:
             for name, items in self.track_items.items():
-                if item == items['icon'] or item == items['text']:
+                if item == items['icon'] or item == items['text'] or item == items.get('class_text'):
                     self.open_status_panel(name)
                     break
         super().mouseDoubleClickEvent(event)
+        
+    def set_track_classification(self, name, cls):
+        self.track_classifications[name] = cls
+        self.update_tracks()
+
+    def get_track_classification(self, name, default_is_hostile):
+        # DCS Hostiles default to UNKNOWN, Friendlies default to FRIENDLY
+        default_cls = "UNKNOWN" if default_is_hostile else "FRIENDLY"
+        return self.track_classifications.get(name, default_cls)
         
     def get_unit_type(self, target_data, is_hostile, tracks):
         unit_type_str = target_data.get('type', 'UNKNOWN')
@@ -343,9 +473,6 @@ class RadarView(QGraphicsView):
                 braa = calculate_braa(f, target_data)
                 
                 if is_awacs and braa['range'] <= 60.0 and braa['aspect'] in ['HOT', 'COLD']:
-                    nctr_success = True
-                    break
-                elif not is_awacs and braa['range'] <= 25.0 and braa['aspect'] in ['HOT', 'COLD']:
                     nctr_success = True
                     break
             if not nctr_success:
@@ -370,7 +497,8 @@ class RadarView(QGraphicsView):
                         break
             if target_data:
                 unit_type_str = self.get_unit_type(target_data, is_hostile, tracks)
-                self.status_panel.update_data(target_data, unit_type_str, is_hostile)
+                current_cls = self.get_track_classification(name, is_hostile)
+                self.status_panel.update_data(target_data, unit_type_str, is_hostile, current_cls)
 
     def open_status_panel(self, name):
         if not hasattr(self, 'status_panel'):
@@ -396,7 +524,8 @@ class RadarView(QGraphicsView):
             return
             
         unit_type_str = self.get_unit_type(target_data, is_hostile, tracks)
-        self.status_panel.update_data(target_data, unit_type_str, is_hostile)
+        current_cls = self.get_track_classification(target_data['unit_name'], is_hostile)
+        self.status_panel.update_data(target_data, unit_type_str, is_hostile, current_cls)
         self.status_panel.show()
         self.status_panel.raise_()
         self.status_panel.activateWindow()
@@ -421,6 +550,14 @@ class RadarView(QGraphicsView):
         # 立即更新畫面顏色
         self.update_tracks()
 
+    def get_render_color(self, name, default_is_hostile, is_checked_in=False):
+        cls = self.get_track_classification(name, default_is_hostile)
+        if cls == "FRIENDLY":
+            return QColor(50, 255, 50) if is_checked_in else QColor(50, 200, 255)
+        if cls == "UNKNOWN": return QColor(255, 255, 50)
+        if cls in ["HOSTILE", "BANDIT"]: return QColor(255, 50, 50)
+        return QColor(255, 255, 255)
+
     def update_tracks(self):
         tracks = self.backend.get_tracks()
         current_names = set()
@@ -429,15 +566,34 @@ class RadarView(QGraphicsView):
         hostile_data = {}
         
         for f in tracks['friendlies']:
-            color = QColor(50, 255, 50) if f['unit_name'] in self.checked_in_tracks else QColor(50, 200, 255)
-            self._update_single_track(f, color, is_hostile=False)
-            current_names.add(f['unit_name'])
-            friendly_data[f['unit_name']] = f
+            name = f['unit_name']
+            cls = self.get_track_classification(name, False)
+            color = self.get_render_color(name, False, name in self.checked_in_tracks)
+            
+            prefix = 'F'
+            if any(k in f.get('type', '') for k in ['E-2', 'E-3', 'A-50', 'KJ', '1L13', '55G6']):
+                prefix = 'A'
+            elif cls == "UNKNOWN": prefix = 'U'
+            elif cls == "HOSTILE": prefix = 'H'
+            elif cls == "BANDIT": prefix = 'B'
+            
+            self._update_single_track(f, color, is_hostile=False, prefix=prefix)
+            current_names.add(name)
+            friendly_data[name] = f
             
         for h in tracks['hostiles']:
-            self._update_single_track(h, QColor(255, 50, 50), is_hostile=True)
-            current_names.add(h['unit_name'])
-            hostile_data[h['unit_name']] = h
+            name = h['unit_name']
+            cls = self.get_track_classification(name, True)
+            color = self.get_render_color(name, True, False)
+            
+            prefix = 'U'
+            if cls == "FRIENDLY": prefix = 'F'
+            elif cls == "HOSTILE": prefix = 'H'
+            elif cls == "BANDIT": prefix = 'B'
+            
+            self._update_single_track(h, color, is_hostile=True, prefix=prefix)
+            current_names.add(name)
+            hostile_data[name] = h
             
         for name in list(self.track_items.keys()):
             if name not in current_names:
@@ -445,6 +601,8 @@ class RadarView(QGraphicsView):
                 self.scene.removeItem(items['icon'])
                 self.scene.removeItem(items['line'])
                 self.scene.removeItem(items['text'])
+                if 'class_text' in items:
+                    self.scene.removeItem(items['class_text'])
                 for dot in items.get('history_dots', []):
                     self.scene.removeItem(dot)
 
@@ -494,7 +652,7 @@ class RadarView(QGraphicsView):
             
         self.refresh_status_panel()
 
-    def _update_single_track(self, data, color, is_hostile):
+    def _update_single_track(self, data, color, is_hostile, prefix='U'):
         name = data['unit_name']
         sx, sy = self.dcs_to_scene(data['x'], data['z'])
         
@@ -532,9 +690,25 @@ class RadarView(QGraphicsView):
             text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
             text.setZValue(15)
             
-            self.track_items[name] = {'icon': icon, 'line': line, 'text': text, 'history_dots': [], 'is_hostile': is_hostile}
-        
+            class_text = self.scene.addText("")
+            class_text.setFont(QFont("Consolas", 10, QFont.Weight.Bold))
+            class_text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            class_text.setZValue(15)
+            
+            self.track_items[name] = {
+                'icon': icon, 'line': line, 'text': text, 'class_text': class_text, 
+                'history_dots': [], 'is_hostile': is_hostile,
+                'last_html': '', 'last_prefix': ''
+            }
         items = self.track_items[name]
+        
+        if 'class_text' not in items:
+            class_text = self.scene.addText("")
+            class_text.setFont(QFont("Consolas", 10, QFont.Weight.Bold))
+            class_text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            class_text.setZValue(15)
+            items['class_text'] = class_text
+            
         items['icon'].setPos(sx, sy)
         
         # 繪製歷史殘影 (Track Trails)
@@ -564,13 +738,22 @@ class RadarView(QGraphicsView):
         # 動態更新文字與連線顏色 (可能因為右鍵報到而改變)
         items['text'].setDefaultTextColor(color)
         
+        if 'class_text' in items:
+            items['class_text'].setDefaultTextColor(color)
+            if items.get('last_prefix') != prefix:
+                items['class_text'].setPlainText(prefix)
+                items['last_prefix'] = prefix
+            items['class_text'].setPos(sx, sy)
+            items['class_text'].setTransform(QTransform().translate(-4, -18))
+        
         # 判斷是否展開字卡 (全域開啟 或 個別被點擊展開 或 處於接管狀態)
         is_expanded = self.global_labels_expanded or (name in self.expanded_labels) or (name in self.checked_in_tracks)
         
+        display_name = f"{name}"
         if is_expanded:
-            label_html = f"{name}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS"
+            label_html = f"{display_name}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS"
         else:
-            label_html = f"{name}"
+            label_html = f"{display_name}"
             
         # 繪製選取狀態
         normal_pen = QPen(color)
@@ -586,8 +769,37 @@ class RadarView(QGraphicsView):
             items['line'].setPen(normal_pen)
             
         items['line'].setLine(sx, sy, fsx, fsy)
-        items['text'].setPos(sx + 10, sy - 10)
-        items['text'].setHtml(label_html)
+        items['text'].setPos(sx, sy)
+        items['text'].setTransform(QTransform().translate(15, -10))
+        
+        if items.get('last_html') != label_html:
+            items['text'].setHtml(label_html)
+            items['last_html'] = label_html
+
+def create_sidebar_icon(shape_type):
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(180, 255, 180, 255))
+    pen.setWidth(2)
+    painter.setPen(pen)
+    
+    if shape_type == "mark":
+        painter.drawEllipse(6, 6, 20, 20)
+        painter.drawLine(16, 2, 16, 10)
+        painter.drawLine(16, 22, 16, 30)
+        painter.drawLine(2, 16, 10, 16)
+        painter.drawLine(22, 16, 30, 16)
+    elif shape_type == "airbase":
+        painter.drawLine(8, 28, 24, 4)
+        painter.drawLine(14, 28, 30, 4)
+    elif shape_type == "label":
+        painter.drawRect(4, 10, 24, 12)
+        painter.drawLine(8, 16, 20, 16)
+    
+    painter.end()
+    return QIcon(pixmap)
 
 class GCIMainWindow(QMainWindow):
     def __init__(self, backend):
@@ -606,25 +818,43 @@ class GCIMainWindow(QMainWindow):
         
         # 控制面板 (窄邊條)
         sidebar = QVBoxLayout()
-        sidebar.setContentsMargins(10, 10, 10, 10)
+        sidebar.setContentsMargins(8, 8, 8, 8)
+        sidebar.setSpacing(12)
         
-        from PyQt6.QtWidgets import QStyle
+        button_style = """
+            QPushButton {
+                background-color: #162420;
+                border: 1px solid #2a4035;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #2a4035;
+                border: 1px solid #b4ffb4;
+            }
+            QPushButton:pressed {
+                background-color: #b4ffb4;
+            }
+        """
+        
         self.btn_mark = QPushButton()
-        self.btn_mark.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        self.btn_mark.setIcon(create_sidebar_icon("mark"))
         self.btn_mark.setToolTip("標記友軍 (Toggle Control) - 點擊友軍後按此按鈕以標記接管狀態")
-        self.btn_mark.setFixedSize(40, 40)
+        self.btn_mark.setFixedSize(45, 45)
+        self.btn_mark.setStyleSheet(button_style)
         self.btn_mark.clicked.connect(self.radar.toggle_selected_friendly)
         
         self.btn_toggle_airbases = QPushButton()
-        self.btn_toggle_airbases.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon))
+        self.btn_toggle_airbases.setIcon(create_sidebar_icon("airbase"))
         self.btn_toggle_airbases.setToolTip("顯示/隱藏機場與跑道 (Declutter)")
-        self.btn_toggle_airbases.setFixedSize(40, 40)
+        self.btn_toggle_airbases.setFixedSize(45, 45)
+        self.btn_toggle_airbases.setStyleSheet(button_style)
         self.btn_toggle_airbases.clicked.connect(self.radar.toggle_airbases)
         
         self.btn_toggle_labels = QPushButton()
-        self.btn_toggle_labels.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
+        self.btn_toggle_labels.setIcon(create_sidebar_icon("label"))
         self.btn_toggle_labels.setToolTip("顯示/隱藏所有航跡詳細字卡")
-        self.btn_toggle_labels.setFixedSize(40, 40)
+        self.btn_toggle_labels.setFixedSize(45, 45)
+        self.btn_toggle_labels.setStyleSheet(button_style)
         self.btn_toggle_labels.clicked.connect(self.radar.toggle_all_labels)
         
         sidebar.addWidget(self.btn_mark)
@@ -635,11 +865,31 @@ class GCIMainWindow(QMainWindow):
         layout.addLayout(sidebar)
         self.setCentralWidget(main_widget)
 
+def create_gci_cursor():
+    cursor_size = 20
+    pixmap = QPixmap(cursor_size, cursor_size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    
+    # 純圓形白亮綠色游標
+    pen = QPen(QColor(180, 255, 180, 255))
+    pen.setWidth(2)
+    painter.setPen(pen)
+    
+    c = cursor_size / 2
+    painter.drawEllipse(QPointF(c, c), 7, 7)
+    painter.end()
+    
+    return QCursor(pixmap, hotX=int(c), hotY=int(c))
+
 def run_app():
     backend = GCIBackend(host="0.0.0.0")
     backend.start()
     
     app = QApplication(sys.argv)
+    app.setOverrideCursor(create_gci_cursor())
+    
     window = GCIMainWindow(backend)
     window.show()
     
