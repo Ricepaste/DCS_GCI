@@ -4,9 +4,10 @@ import threading
 import time
 
 class GCIBackend:
-    def __init__(self, host="0.0.0.0", port=10082):
+    def __init__(self, host="0.0.0.0", port=10082, stagger_updates=True):
         self.host = host
         self.port = port
+        self.stagger_updates = stagger_updates
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((self.host, self.port))
         self.sock.settimeout(1.0)
@@ -20,7 +21,17 @@ class GCIBackend:
         self.history = {} # unit_name -> list of (x, z) tuples
         self.last_update_time = time.time()
         
+        self.pending_updates = {} # uid -> (apply_time, is_friendly, data)
+        self.last_seen_time = {} # uid -> time.time()
+        
         self.lock = threading.Lock()
+
+    def _get_stagger_delay(self, uid):
+        if not self.stagger_updates:
+            return 0.0
+        # Deterministic delay between 0.0 and 3.9 seconds based on unit name
+        checksum = sum(ord(c) for c in uid)
+        return (checksum % 40) / 10.0
 
     def start(self):
         self.running = True
@@ -48,42 +59,71 @@ class GCIBackend:
 
     def parse_telemetry(self, json_str):
         telemetry = json.loads(json_str)
+        current_time = time.time()
         
         with self.lock:
-            self.friendlies.clear()
-            self.hostiles.clear()
+            # We do NOT clear self.friendlies and self.hostiles here anymore
+            # Updates are placed into a pending queue to stagger their UI rendering
             
             for f in telemetry.get("friendlies", []):
                 uid = f.get("unit_name")
-                if uid not in self.history:
-                    self.history[uid] = []
-                f['history'] = list(self.history[uid])
-                self.friendlies[uid] = f
-                # Append current position for the next sweep
-                self.history[uid].append((f.get("x", 0), f.get("z", 0)))
-                if len(self.history[uid]) > 10:
-                    self.history[uid].pop(0)
+                self.last_seen_time[uid] = current_time
+                delay = self._get_stagger_delay(uid)
+                self.pending_updates[uid] = (current_time + delay, True, f)
                 
             for h in telemetry.get("hostiles", []):
                 uid = h.get("unit_name")
-                if uid not in self.history:
-                    self.history[uid] = []
-                h['history'] = list(self.history[uid])
-                self.hostiles[uid] = h
-                # Append current position for the next sweep
-                self.history[uid].append((h.get("x", 0), h.get("z", 0)))
-                if len(self.history[uid]) > 10:
-                    self.history[uid].pop(0)
+                self.last_seen_time[uid] = current_time
+                delay = self._get_stagger_delay(uid)
+                self.pending_updates[uid] = (current_time + delay, False, h)
                 
             self.airbases = telemetry.get("airbases", [])
-                
-            self.last_update_time = time.time()
+            self.last_update_time = current_time
 
     def get_tracks(self):
+        current_time = time.time()
+        
         with self.lock:
+            # 1. Apply pending updates that are due
+            to_remove_pending = []
+            for uid, (apply_time, is_friendly, data) in self.pending_updates.items():
+                if current_time >= apply_time:
+                    if uid not in self.history:
+                        self.history[uid] = []
+                    
+                    data['history'] = list(self.history[uid])
+                    
+                    if is_friendly:
+                        self.friendlies[uid] = data
+                    else:
+                        self.hostiles[uid] = data
+                        
+                    # Append current position for the next sweep
+                    self.history[uid].append((data.get("x", 0), data.get("z", 0)))
+                    if len(self.history[uid]) > 10:
+                        self.history[uid].pop(0)
+                        
+                    to_remove_pending.append(uid)
+            
+            for uid in to_remove_pending:
+                del self.pending_updates[uid]
+                
+            # 2. Remove stale tracks (missed 2 consecutive 4.0s UDP packets)
+            to_remove_stale = []
+            for uid, seen_time in self.last_seen_time.items():
+                if current_time - seen_time > 8.5:
+                    to_remove_stale.append(uid)
+                    
+            for uid in to_remove_stale:
+                if uid in self.friendlies: del self.friendlies[uid]
+                if uid in self.hostiles: del self.hostiles[uid]
+                if uid in self.history: del self.history[uid]
+                if uid in self.pending_updates: del self.pending_updates[uid]
+                del self.last_seen_time[uid]
+
             return {
                 "friendlies": list(self.friendlies.values()),
                 "hostiles": list(self.hostiles.values()),
                 "airbases": self.airbases,
-                "stale": time.time() - self.last_update_time > 3.0
+                "stale": current_time - self.last_update_time > 8.5
             }
