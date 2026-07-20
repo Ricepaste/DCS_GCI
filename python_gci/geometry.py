@@ -1,5 +1,32 @@
 import math
 
+def calculate_speed(vx, vz):
+    """
+    Calculate ground speed in knots from velocity vectors in m/s.
+    """
+    speed_m_s = math.sqrt(vx**2 + vz**2)
+    return int(speed_m_s * 1.94384)
+
+def to_dms(deg, is_lat):
+    """Convert decimal degrees to standard DMS string format."""
+    direction = "N" if is_lat and deg >= 0 else ("S" if is_lat else ("E" if deg >= 0 else "W"))
+    deg = abs(deg)
+    d = int(deg)
+    m = int((deg - d) * 60)
+    s = int((deg - d - m/60.0) * 3600)
+    return f"{direction}{d:02d}°{m:02d}'{s:02d}\""
+
+def sync_ordered_selection(old_order, current_names):
+    """
+    Synchronize the ordered selection list with the current selected items.
+    Maintains the order of old items, and appends new items at the end.
+    """
+    new_order = [n for n in old_order if n in current_names]
+    for name in current_names:
+        if name not in new_order:
+            new_order.append(name)
+    return new_order
+
 def calculate_braa(friendly, target):
     """
     Calculate Bearing, Range, Altitude, Aspect (BRAA) from friendly to target.
@@ -32,13 +59,14 @@ def calculate_braa(friendly, target):
     if aspect > 180:
         aspect = 360 - aspect
         
-    aspect_str = "HOT"
-    if aspect < 45:
+    if aspect <= 30:
         aspect_str = "HOT"
-    elif aspect < 135:
+    elif aspect <= 60:
         aspect_str = "FLANK"
+    elif aspect <= 120:
+        aspect_str = "BEAM"
     else:
-        aspect_str = "COLD"
+        aspect_str = "DRAG"
         
     return {
         "bearing": int(bearing_deg),

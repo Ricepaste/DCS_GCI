@@ -53,6 +53,16 @@
 
 ---
 
+## 開發紀錄 (Changelog)
+* **2026-07-20 (LotATC Lite 版本)**:
+  * 徹底重構為 External GCI 架構，完全掌握程式控制權，不再依賴 DCS 內部黑箱微觀 AI。
+  * 支援 **無限縮放平移** 雷達畫布。
+  * 支援 **UI 按鈕切換友軍標記 (Toggle Control)** 變更航跡顏色。
+  * 支援 **任意兩目標動態 BRAA 計算** (點擊兩目標即顯示連線、方位角、距離、高度、態勢)。
+  * 支援 **地面速度 (Ground Speed, GS)** 即時顯示。
+  * 支援 **靜態 DCS 地圖背景載入** (`python_gci/images/map.png`)，以及**動態向量海岸線與機場資料 (Vector Maps)**。
+  * 支援 **多人伺服器玩家 ID 擷取**，真人玩家將顯示專屬 ID 而非機體呼號。
+
 ## 📡 DCS 外部戰場監控系統 (External GCI)
 
 本專案包含一個外部的戰場管制 (GCI) 雷達介面，透過 UDP Sockets 將 DCS 遊戲內的雷達偵測資料即時傳送到外部 Python 程式，提供一個現代化、無黑箱、且具備真實雷達死角模擬的 GCI 介面。
@@ -74,3 +84,21 @@
    - 在任務編輯器中，利用 `DO SCRIPT FILE` 掛載 `External_GCI_Exporter.lua`。
    - **注意：** 你的藍軍必須要有雷達單位 (如 AWACS 或 EWR 預警雷達)，因為本腳本強調真實性，只會將「藍軍雷達實際偵測到的目標」匯出到 Python GCI 介面上。
 3. 任務開始後，切換到 Python 視窗，你就能在深色雷達螢幕上即時看到友軍與敵軍的動態航跡了！
+
+### 🗺️ 向量地圖生成工具 (Vector Map Extractor)
+為了讓雷達能夠精準顯示海岸線與機場位置，並且支援 DCS **所有未來的地圖**（高加索、敘利亞、馬里亞納等），我們提供了一套全自動地圖資料掃描與匯出工具。
+
+1. **DCS 內匯出 (Lua)**：
+   - 進入 DCS 任務編輯器或隨便開一個該地圖的任務。
+   - 透過觸發器 `DO SCRIPT FILE` 或是 Web Console 執行 `export_map_data.lua`。
+   - 腳本會自動計算該地圖的邊界，並掃描海岸線與機場，輸出到系統的 `dcs.log` 檔案中。這利用了 `env.info` 巧妙繞過了 DCS Mission Scripting 環境對於寫檔 (lfs/io) 的沙盒限制。
+
+2. **Python 端萃取**：
+   - 離開任務後，開啟終端機執行：
+     ```powershell
+     python python_gci/extract_map_data.py
+     ```
+   - 腳本會自動讀取 `Saved Games/DCS/Logs/dcs.log`，將地圖點陣資料萃取成 `coastline.csv` 與 `airbases.csv`。
+
+3. **啟動雷達**：
+   - 只要 `python_gci` 資料夾底下存在上述兩個 `.csv` 檔案，`app.py` 啟動時就會自動載入，覆蓋預設資料，為你繪製極具現代感的輕量化戰術雷達圖！
