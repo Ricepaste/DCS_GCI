@@ -37,27 +37,30 @@ class GCIBackend:
             try:
                 data, addr = self.sock.recvfrom(65536)
                 json_str = data.decode('utf-8')
-                telemetry = json.loads(json_str)
-                
-                with self.lock:
-                    self.friendlies.clear()
-                    self.hostiles.clear()
-                    
-                    for f in telemetry.get("friendlies", []):
-                        self.friendlies[f.get("unit_name")] = f
-                        
-                    for h in telemetry.get("hostiles", []):
-                        self.hostiles[h.get("unit_name")] = h
-                        
-                    self.airbases = telemetry.get("airbases", [])
-                        
-                    self.last_update_time = time.time()
+                self.parse_telemetry(json_str)
             except socket.timeout:
                 pass
             except json.JSONDecodeError:
                 print("Failed to decode JSON from DCS")
             except Exception as e:
                 print(f"Error in backend: {e}")
+
+    def parse_telemetry(self, json_str):
+        telemetry = json.loads(json_str)
+        
+        with self.lock:
+            self.friendlies.clear()
+            self.hostiles.clear()
+            
+            for f in telemetry.get("friendlies", []):
+                self.friendlies[f.get("unit_name")] = f
+                
+            for h in telemetry.get("hostiles", []):
+                self.hostiles[h.get("unit_name")] = h
+                
+            self.airbases = telemetry.get("airbases", [])
+                
+            self.last_update_time = time.time()
 
     def get_tracks(self):
         with self.lock:

@@ -4,7 +4,8 @@
 -- =========================================
 
 local function export_map_data()
-    env.info("=== DCS MAP DATA EXPORT START ===")
+    local theatre = env.mission.theatre or "Unknown"
+    env.info("=== DCS MAP DATA EXPORT START: " .. theatre .. " ===")
     
     -- 1. 匯出機場，並動態計算地圖掃描邊界
     -- 我們用所有機場的位置，向外擴張 200 公里作為海岸線掃描區域

@@ -37,8 +37,18 @@ class RadarView(QGraphicsView):
             "Min Vody": {"x": 269781, "z": 272828, "course": 0},
         }
         
+        # 決定當前要讀取的地圖資料目錄
+        base_dir = os.path.dirname(__file__)
+        current_map_path = os.path.join(base_dir, "map_data", "current_map.txt")
+        self.current_theatre = "Caucasus"
+        if os.path.exists(current_map_path):
+            with open(current_map_path, "r", encoding="utf-8") as f:
+                self.current_theatre = f.read().strip()
+                
+        map_data_dir = os.path.join(base_dir, "map_data", self.current_theatre)
+        
         # 嘗試讀取匯出的 airbases.csv (覆蓋內建名單)
-        airbases_path = os.path.join(os.path.dirname(__file__), "airbases.csv")
+        airbases_path = os.path.join(map_data_dir, "airbases.csv")
         if os.path.exists(airbases_path):
             self.airbases = {}
             with open(airbases_path, "r", encoding='utf-8') as f:
@@ -51,9 +61,8 @@ class RadarView(QGraphicsView):
                         
         self.draw_airbases()
         
-        # --- 繪製海洋填色與海岸線 ---
-        coastline_path = os.path.join(os.path.dirname(__file__), "coastline.csv")
-        sea_seed_path = os.path.join(os.path.dirname(__file__), "sea_seed.csv")
+        # --- 繪製海岸線 ---
+        coastline_path = os.path.join(map_data_dir, "coastline.csv")
         
         coast_pts = []
         if os.path.exists(coastline_path):
@@ -64,14 +73,7 @@ class RadarView(QGraphicsView):
                         if len(parts) == 2:
                             coast_pts.append((float(parts[0]), float(parts[1])))
                             
-        seeds = []
-        if os.path.exists(sea_seed_path):
-            with open(sea_seed_path, "r") as f:
-                for line in f:
-                    if line.strip():
-                        parts = line.split(',')
-                        if len(parts) == 2:
-                            seeds.append((float(parts[0]), float(parts[1])))
+        # 已移除海洋種子點與洪泛填充邏輯，保留純淨的深色背景與銳利海岸線
                             
         if coast_pts:
             # 獨立繪製海岸線以維持無視窗縮放比例的銳利度
@@ -307,6 +309,7 @@ class GCIMainWindow(QMainWindow):
         
         # 雷達主畫面
         self.radar = RadarView(backend)
+        self.setWindowTitle(f"DCS External GCI (LotATC Lite) - {self.radar.current_theatre}")
         layout.addWidget(self.radar, stretch=1)
         
         # 控制面板 (窄邊條)
