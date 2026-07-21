@@ -86,55 +86,42 @@ def generate_link16_tn(unit_name):
 def calculate_intercept_heading(hunter_x, hunter_z, hunter_v, target_x, target_z, target_vx, target_vz):
     """
     Calculate intercept course based on velocity vectors and positions.
-    Returns (cut_heading_deg, time_to_intercept_sec, impact_x, impact_z) or None if impossible.
+    Always returns (cut_heading_deg, time_to_intercept_sec, impact_x, impact_z).
     """
     # Relative position
     dx = target_x - hunter_x
     dz = target_z - hunter_z
     dist = math.hypot(dx, dz)
+    los_angle = math.atan2(dz, dx)
     
-    if dist < 1.0 or hunter_v <= 0:
-        return None
+    if dist < 1.0:
+        return ((math.degrees(los_angle) + 360) % 360, 0.0, target_x, target_z)
         
     # Target velocity vector
     tv_mag = math.hypot(target_vx, target_vz)
     
-    # If target is stationary, just point at it
-    if tv_mag < 1.0:
-        hdg = math.degrees(math.atan2(dz, dx))
-        return ((hdg + 360) % 360, dist / hunter_v, target_x, target_z)
+    # If hunter is stationary or target is stationary
+    if hunter_v <= 0 or tv_mag < 1.0:
+        hdg = (math.degrees(los_angle) + 360) % 360
+        v_eff = max(hunter_v, 1.0)
+        return (hdg, dist / v_eff, target_x, target_z)
         
     # Law of sines for intercept triangle
-    # Angle between LOS and Target velocity
-    los_angle = math.atan2(dz, dx)
     target_hdg = math.atan2(target_vz, target_vx)
-    
-    # Angle beta (angle at the target between LOS and its travel direction)
     beta = target_hdg - los_angle
     
-    # hunter_v / sin(beta) = target_v / sin(alpha)
     sin_alpha = (tv_mag / hunter_v) * math.sin(beta)
+    clamped_sin_alpha = max(-1.0, min(1.0, sin_alpha))
+    alpha = math.asin(clamped_sin_alpha)
     
-    # Check if intercept is possible (hunter is fast enough)
-    if abs(sin_alpha) > 1.0:
-        return None # Hunter too slow, cannot intercept
-        
-    alpha = math.asin(sin_alpha)
-    
-    # The intercept heading is LOS + alpha
     intercept_hdg_rad = los_angle + alpha
     intercept_hdg_deg = (math.degrees(intercept_hdg_rad) + 360) % 360
     
-    # Calculate closing speed and time
-    # closing velocity = hunter_v * cos(alpha) - target_v * cos(beta)
     closing_v = hunter_v * math.cos(alpha) - tv_mag * math.cos(beta)
-    
     if closing_v <= 0:
-        return None # Target is pulling away
+        closing_v = max(1.0, hunter_v)
         
     tti_sec = dist / closing_v
-    
-    # Calculate impact point
     impact_x = target_x + target_vx * tti_sec
     impact_z = target_z + target_vz * tti_sec
     

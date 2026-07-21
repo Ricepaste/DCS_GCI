@@ -906,21 +906,23 @@ class RadarView(QGraphicsView):
             self.ruler_text.show()
             return
 
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._is_panning = True
-            self._pan_start = event.position().toPoint()
-            return
             
-        item = self.itemAt(event.position().toPoint())
-        if item:
-            if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
+            item = self.itemAt(event.position().toPoint())
+            is_track_click = False
+            if item:
                 for name, items in self.track_items.items():
                     if item == items['icon'] or item == items['text'] or item == items.get('class_text'):
                         if name in self.expanded_labels:
                             self.expanded_labels.remove(name)
                         else:
                             self.expanded_labels.add(name)
+                        is_track_click = True
                         break
+            if not is_track_click:
+                self._is_panning = True
+                self._pan_start = event.position().toPoint()
+                return
             
         super().mousePressEvent(event)
         
@@ -1255,24 +1257,6 @@ class RadarView(QGraphicsView):
                 self.impact_point.hide()
                 self.osd_intercept.hide()
                 
-        elif len(valid_selected) == 1 and self.bullseye_pos:
-            target = valid_selected[0]
-            bx = -self.bullseye_pos.y()
-            bz = self.bullseye_pos.x()
-            bullseye_unit = {'x': bx, 'z': bz, 'y': 0, 'vx': 0, 'vz': 0}
-            braa = calculate_braa(bullseye_unit, target)
-            
-            info = f"BULLSEYE:\nBRG: {braa['bearing']:03d}°\nRNG: {braa['range']} NM\nALT: FL{braa['altitude']//100:03d}"
-            
-            self.osd_braa.setText(info)
-            self.osd_braa.adjustSize()
-            self.osd_braa.move(20, self.viewport().height() - self.osd_braa.height() - 20)
-            self.osd_braa.show()
-            
-            self.intercept_line.hide()
-            self.impact_point.hide()
-            self.osd_intercept.hide()
-            
         else:
             self.intercept_line.hide()
             self.impact_point.hide()
@@ -1384,10 +1368,14 @@ class RadarView(QGraphicsView):
         player_name = data.get('player_name') or ''
         
         unit_type = data.get('type') or ''
-        if not unit_type or unit_type.upper() in ['UNK', 'UNKNOWN'] or prefix == 'U':
+        if not unit_type :
             track_id = f"{tn}"
-        else:
+        elif not is_hostile:
             track_id = f"{tn} / {unit_type}"
+        else:
+            tracks = self.backend.get_tracks()
+            unit_type_str = self.get_unit_type(data, is_hostile, tracks)
+            track_id = f"{tn} / {unit_type_str}"
         
         if is_expanded:
             if player_name:
