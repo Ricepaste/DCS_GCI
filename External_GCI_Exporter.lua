@@ -28,10 +28,15 @@ local function getUnitData(unit, is_friendly)
     
     local lat, lon, alt = coord.LOtoLL(pos)
 
+    local group = unit:getGroup()
+    local groupName = group and group:getName() or ""
+    local category = group and group:getCategory() or -1
+
     return {
         unit_name = unitName,
         player_name = playerName or "",
-        group_name = unit:getGroup():getName(),
+        group_name = groupName,
+        category = category,
         type = unit:getTypeName(),
         x = pos.x,
         y = pos.y, -- altitude in DCS
@@ -102,7 +107,7 @@ local function export_telemetry_safe(time, args)
     
     local knownHostiles = {}
     
-    local categories = {Group.Category.AIRPLANE, Group.Category.HELICOPTER}
+    local categories = {Group.Category.AIRPLANE, Group.Category.HELICOPTER, Group.Category.GROUND}
     for _, cat in ipairs(categories) do
         local blueGroups = coalition.getGroups(coalition.side.BLUE, cat)
         if blueGroups then

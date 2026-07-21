@@ -67,6 +67,7 @@
   * 擴充 **動態航機懸浮資訊面板 (Status Panel)**：新增 `WEAPONS` 與 `FUEL` 可持久化編輯欄位，支援記錄各航機獨立的戰術筆記。
   * 引入 **自動機型縮寫前綴** (如 `[A]` 代表 AWACS, `[U]`, `[F]`, `[H]`, `[B]`)，並優化了文字圖層置中顯示以解決縮放偏移問題。
   * 實裝 **現代化 GCI 專屬游標 (Custom Cursor)**：自訂螢光綠準星游標並實作滑鼠手動平移 (Manual Panning)，提升擬真戰管操作手感。
+  * 新增 **SAM 防空導彈動態威脅圈 (Threat Rings)**：自動識別地面 SAM/防空單位 (S-300, Patriot, Buk, Tor, Kub, Osa, Tunguska 等) 並繪製半透明虛線威脅圈；支援側邊欄專屬按鈕與快捷鍵 `T` 即時 Toggle 切換開關。
 
 ## 📡 DCS 外部戰場監控系統 (External GCI)
 

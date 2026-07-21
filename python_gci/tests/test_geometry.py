@@ -54,3 +54,18 @@ def test_calculate_braa_east():
     braa = calculate_braa(friendly, target)
     assert braa['bearing'] == 90
     assert braa['aspect'] == "BEAM"
+
+def test_get_sam_threat_range_nm():
+    from geometry import get_sam_threat_range_nm
+    assert get_sam_threat_range_nm("S-300PS 64H6E sr") is None
+    assert get_sam_threat_range_nm("SA-10 S-300PS 5P85PT") is None
+    assert get_sam_threat_range_nm("SA-10 S-300PS 30N6 TR") == 45.0
+    assert get_sam_threat_range_nm("HAWK sr") is None
+    assert get_sam_threat_range_nm("HAWK TR") == 24.0
+    assert get_sam_threat_range_nm("HAWK ln") is None
+    assert get_sam_threat_range_nm("Osa 9A33 ln") == 5.5
+    assert get_sam_threat_range_nm("Tor 9A331") == 6.5
+    assert get_sam_threat_range_nm("柴油發電車 (Generator)") is None
+    assert get_sam_threat_range_nm("B-1B") is None
+    assert get_sam_threat_range_nm("") is None
+    assert get_sam_threat_range_nm(None) is None

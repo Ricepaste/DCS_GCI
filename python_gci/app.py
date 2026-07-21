@@ -570,6 +570,10 @@ class RadarView(QGraphicsView):
         self.airbase_items = []
         self.airbases = {}
         
+        self.show_threat_rings = True
+        self.threat_ring_items = {}
+        self.threat_text_items = {}
+        
         # 決定當前要讀取的地圖資料目錄
         base_dir = os.path.dirname(__file__)
         current_map_path = os.path.join(base_dir, "map_data", "current_map.txt")
@@ -800,6 +804,25 @@ class RadarView(QGraphicsView):
         if not self.global_labels_expanded:
             self.expanded_labels.clear() # 關閉全局時，順便重置個別展開狀態
         self.setScene(self.scene)
+
+    def toggle_threat_rings(self):
+        self.show_threat_rings = not self.show_threat_rings
+        for ellipse in self.threat_ring_items.values():
+            ellipse.setVisible(self.show_threat_rings)
+        if hasattr(self, 'threat_text_items'):
+            for text_item in self.threat_text_items.values():
+                text_item.setVisible(self.show_threat_rings)
+        if hasattr(self, 'main_window'):
+            status = "Threat Rings ON" if self.show_threat_rings else "Threat Rings OFF"
+            self.main_window.statusBar().showMessage(status)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_T:
+            self.toggle_threat_rings()
+        elif event.key() == Qt.Key.Key_B:
+            self.toggle_set_bullseye()
+        else:
+            super().keyPressEvent(event)
         
     def drawBackground(self, painter, rect):
         super().drawBackground(painter, rect)
@@ -1195,6 +1218,13 @@ class RadarView(QGraphicsView):
                 self.scene.removeItem(items['text'])
                 if 'class_text' in items:
                     self.scene.removeItem(items['class_text'])
+                if 'threat_ring' in items:
+                    self.scene.removeItem(items['threat_ring'])
+                    self.threat_ring_items.pop(name, None)
+                if 'threat_text' in items:
+                    self.scene.removeItem(items['threat_text'])
+                    if hasattr(self, 'threat_text_items'):
+                        self.threat_text_items.pop(name, None)
                 for dot in items.get('history_dots', []):
                     self.scene.removeItem(dot)
 
@@ -1267,6 +1297,8 @@ class RadarView(QGraphicsView):
 
     def _update_single_track(self, data, color, is_hostile, prefix='U'):
         name = data['unit_name']
+        is_ground = data.get('category') in [2, 3]
+        
         sx, sy = self.dcs_to_scene(data['x'], data['z'])
         
         future_x = data['x'] + data['vx'] * 30
@@ -1339,11 +1371,70 @@ class RadarView(QGraphicsView):
             dot.setZValue(4)
             items['history_dots'].append(dot)
             
+        # 繪製 SAM 導彈威脅圈 (Threat Rings)
+        unit_type = data.get('type') or ''
+        threat_nm = geometry.get_sam_threat_range_nm(unit_type)
+        if threat_nm:
+            radius_m = threat_nm * 1852.0
+            if 'threat_ring' not in items:
+                ring_pen = QPen(color, 1.5, Qt.PenStyle.DashLine)
+                fill_color = QColor(255, 60, 60, 20) if is_hostile else QColor(60, 160, 255, 20)
+                ring_brush = QBrush(fill_color)
+                ring = self.scene.addEllipse(-radius_m, -radius_m, radius_m * 2, radius_m * 2, ring_pen, ring_brush)
+                ring.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+                ring.setZValue(-3)
+                items['threat_ring'] = ring
+                
+                # Create text label for the SAM
+                threat_text = self.scene.addText(geometry.get_sam_display_name(unit_type))
+                threat_text.setDefaultTextColor(color)
+                threat_text.setFont(QFont("Consolas", 10, QFont.Weight.Bold))
+                threat_text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+                threat_text.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+                threat_text.setZValue(-2)
+                items['threat_text'] = threat_text
+                
+            items['threat_ring'].setPos(sx, sy)
+            items['threat_ring'].setVisible(self.show_threat_rings)
+            self.threat_ring_items[name] = items['threat_ring']
+            
+            # Position text near the center
+            items['threat_text'].setPos(sx, sy)
+            items['threat_text'].setTransform(QTransform().translate(5, -15))
+            items['threat_text'].setVisible(self.show_threat_rings)
+            self.threat_text_items = getattr(self, 'threat_text_items', {})
+            self.threat_text_items[name] = items['threat_text']
+        else:
+            if 'threat_ring' in items:
+                self.scene.removeItem(items['threat_ring'])
+                del items['threat_ring']
+                self.threat_ring_items.pop(name, None)
+            if 'threat_text' in items:
+                self.scene.removeItem(items['threat_text'])
+                del items['threat_text']
+                if hasattr(self, 'threat_text_items'):
+                    self.threat_text_items.pop(name, None)
+                
+        # 如果是地面單位，隱藏所有航跡圖示與文字，且不處理殘影 (只顯示威脅圈)
+        if is_ground:
+            items['icon'].hide()
+            items['line'].hide()
+            items['text'].hide()
+            if 'class_text' in items:
+                items['class_text'].hide()
+            for dot in items.get('history_dots', []):
+                dot.hide()
+            return
+            
+        items['icon'].show()
+        items['line'].show()
+
         # 更新殘影位置與透明度
         for i, (hx, hz) in enumerate(history_points):
             hsx, hsy = self.dcs_to_scene(hx, hz)
             dot = items['history_dots'][i]
             dot.setPos(hsx, hsy)
+            dot.show()
             # 越舊的點越透明
             alpha = int(255 * (i + 1) / len(history_points)) * 0.7
             dot_color = QColor(color)
@@ -1446,6 +1537,10 @@ def create_sidebar_icon(shape_type):
         painter.drawLine(8, 10, 24, 10)
         painter.drawLine(8, 16, 24, 16)
         painter.drawLine(8, 22, 24, 22)
+    elif shape_type == "threat":
+        painter.drawEllipse(4, 4, 24, 24)
+        painter.drawEllipse(10, 10, 12, 12)
+        painter.drawEllipse(14, 14, 4, 4)
     
     painter.end()
     return QIcon(pixmap)
@@ -1502,6 +1597,13 @@ class GCIMainWindow(QMainWindow):
         self.btn_toggle_airbases.setStyleSheet(button_style)
         self.btn_toggle_airbases.clicked.connect(self.radar.toggle_airbases)
         
+        self.btn_toggle_threats = QPushButton()
+        self.btn_toggle_threats.setIcon(create_sidebar_icon("threat"))
+        self.btn_toggle_threats.setToolTip("顯示/隱藏 SAM 導彈威脅圈 (Threat Rings) [快捷鍵 T]")
+        self.btn_toggle_threats.setFixedSize(45, 45)
+        self.btn_toggle_threats.setStyleSheet(button_style)
+        self.btn_toggle_threats.clicked.connect(self.radar.toggle_threat_rings)
+        
         self.btn_toggle_labels = QPushButton()
         self.btn_toggle_labels.setIcon(create_sidebar_icon("label"))
         self.btn_toggle_labels.setToolTip("顯示/隱藏所有航跡詳細字卡")
@@ -1532,6 +1634,7 @@ class GCIMainWindow(QMainWindow):
         
         sidebar.addWidget(self.btn_mark)
         sidebar.addWidget(self.btn_toggle_airbases)
+        sidebar.addWidget(self.btn_toggle_threats)
         sidebar.addWidget(self.btn_toggle_labels)
         sidebar.addWidget(self.btn_set_bullseye)
         sidebar.addWidget(self.btn_draw_airspace)

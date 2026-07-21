@@ -1,4 +1,5 @@
 import math
+import re
 
 def calculate_speed(vx, vz):
     """
@@ -267,3 +268,181 @@ def generate_mgrs_grid(ref_x, ref_z, ref_lat, ref_lon, map_min_lat=39.0, map_max
                         lines.append(((dx1, dz1), (dx2, dz2)))
 
     return lines, labels
+
+SAM_THREAT_RANGES = {
+    # SA-5 Gammon (S-200)
+    "S-200": 130.0,
+    "5566": 130.0,
+    
+    # SA-10 Grumble (S-300PS / S-300PMU)
+    "S-300": 45.0,
+    "64H6E": 45.0,
+    "30N6": 45.0,
+    "SA-10": 45.0,
+    
+    # Patriot (PAC-2 / PAC-3)
+    "PATRIOT": 43.0,
+    "AN/MPQ-53": 43.0,
+    
+    # SA-2 Guideline (S-75)
+    "S-75": 23.0,
+    "SA-2": 23.0,
+    "FAN SONG": 23.0,
+    
+    # HAWK (MIM-23)
+    "HAWK": 24.0,
+    
+    # SA-11 Gadfly / SA-17 Grizzly (Buk-M1-2 / Buk-M2)
+    "BUK": 19.0,
+    "9A310": 19.0,
+    "9A317": 19.0,
+    "9S18": 19.0,
+    "SA-11": 19.0,
+    "SA-17": 19.0,
+    
+    # SA-6 Gainful (2K12 Kub)
+    "KUB": 13.5,
+    "SA-6": 13.5,
+    "STR": 13.5,
+    
+    # SA-3 Goa (S-125 Pechora)
+    "S-125": 13.0,
+    "LOW BLOW": 13.0,
+    "SA-3": 13.0,
+    
+    # NASAMS
+    "NASAMS": 13.0,
+    
+    # HQ-7 / Crotale
+    "HQ-7": 8.0,
+    "CROTALE": 8.0,
+    
+    # SA-15 Gauntlet (Tor-M1 / Tor-M2)
+    "TOR": 6.5,
+    "9A331": 6.5,
+    "SA-15": 6.5,
+    
+    # SA-8 Gecko (9K33 Osa)
+    "OSA": 5.5,
+    "9A33": 5.5,
+    "SA-8": 5.5,
+    
+    # Roland
+    "ROLAND": 4.3,
+    
+    # SA-19 Grison (2S6 Tunguska)
+    "2S6": 4.3,
+    "TUNGUSKA": 4.3,
+    "SA-19": 4.3,
+    
+    # SA-13 Gopher (9K35 Strela-10)
+    "STRELA-10": 2.7,
+    "9A35": 2.7,
+    "SA-13": 2.7,
+    
+    # Avenger / Linebacker / Chaparral
+    "AVENGER": 3.0,
+    "LINEBACKER": 3.0,
+    "CHAPARRAL": 3.0,
+    
+    # SA-9 Gaskin (9K31 Strela-1)
+    "STRELA-1": 2.3,
+    "9A31": 2.3,
+    "SA-9": 2.3,
+    
+    # Gepard / Shilka / AAA / Vulcan
+    "GEPARD": 2.2,
+    "SHILKA": 1.4,
+    "ZSU-23": 1.4,
+    "VULCAN": 1.2,
+}
+
+def get_sam_display_name(unit_type):
+    """
+    Returns a short display name for the SAM site (e.g. 'SA-10', 'HAWK') based on the DCS unit type.
+    """
+    if not unit_type:
+        return ""
+    type_upper = str(unit_type).upper()
+    
+    # Check for specific families first
+    if "S-300" in type_upper or "SA-10" in type_upper or "64H6" in type_upper or "30N6" in type_upper:
+        return "SA-10 (S-300)"
+    if "PATRIOT" in type_upper or "MPQ-53" in type_upper:
+        return "Patriot"
+    if "HAWK" in type_upper:
+        return "HAWK"
+    if "BUK" in type_upper or "SA-11" in type_upper or "SA-17" in type_upper or "9A310" in type_upper or "9S18" in type_upper:
+        return "SA-11 (Buk)"
+    if "TOR" in type_upper or "SA-15" in type_upper or "9A331" in type_upper:
+        return "SA-15 (Tor)"
+    if "OSA" in type_upper or "SA-8" in type_upper or "9A33" in type_upper:
+        return "SA-8 (Osa)"
+    if "TUNGUSKA" in type_upper or "2S6" in type_upper or "SA-19" in type_upper:
+        return "SA-19 (2S6)"
+    if "S-200" in type_upper or "5566" in type_upper:
+        return "SA-5 (S-200)"
+    if "S-75" in type_upper or "SA-2" in type_upper or "FAN SONG" in type_upper:
+        return "SA-2 (S-75)"
+    if "S-125" in type_upper or "SA-3" in type_upper or "LOW BLOW" in type_upper:
+        return "SA-3 (S-125)"
+    if "KUB" in type_upper or "SA-6" in type_upper or "STR" in type_upper:
+        return "SA-6 (Kub)"
+    if "NASAMS" in type_upper:
+        return "NASAMS"
+    if "HQ-7" in type_upper or "CROTALE" in type_upper:
+        return "HQ-7"
+    if "STRELA-10" in type_upper or "SA-13" in type_upper or "9A35" in type_upper:
+        return "SA-13 (Strela-10)"
+    if "STRELA-1" in type_upper or "SA-9" in type_upper or "9A31" in type_upper:
+        return "SA-9 (Strela-1)"
+    if "GEPARD" in type_upper: return "Gepard"
+    if "SHILKA" in type_upper or "ZSU-23" in type_upper: return "Shilka"
+    if "AVENGER" in type_upper: return "Avenger"
+    if "LINEBACKER" in type_upper: return "Linebacker"
+    if "ROLAND" in type_upper: return "Roland"
+    if "VULCAN" in type_upper: return "Vulcan"
+    if "CHAPARRAL" in type_upper: return "Chaparral"
+    
+    return "SAM"
+
+def get_sam_threat_range_nm(unit_type):
+    """
+    Returns SAM engagement range in Nautical Miles for known DCS air defense / SAM types.
+    Returns None if not a recognized SAM/Air defense unit, or if it is a standalone launcher.
+    """
+    if not unit_type:
+        return None
+    type_upper = str(unit_type).upper()
+    
+    # 1. 判斷是否為一體防空車 (TELAR / SPAAG) 或火控雷達 (FCR/TR/STR)
+    # 我們刻意排除了搜索雷達 (SR, 64H6E, 9S18) 以免同一個陣地畫出兩個重疊的威脅圈
+    telar_or_radar = [
+        "9A331", "TUNGUSKA", "2S6", "STRELA", "GEPARD", "SHILKA", "VULCAN", 
+        "AVENGER", "LINEBACKER", "ROLAND", "BUK", "9A310", "9A317", "CHAPARRAL",
+        " TR", "STR", "MPQ", "30N6", "FAN SONG", "LOW BLOW", "S-200_RADAR", "9A33"
+    ]
+    
+    # 2. 判斷是否為純發射車或無關單位 (Launcher / Generator)
+    launcher_only = [" LN", "_LN", " LAUNCHER", "_LAUNCHER", "5P85", "5P73", "2P25", "M192", "M901", "GENERATOR"]
+    
+    # "TOR" has to be exact word to prevent matching "GENERATOR"
+    if re.search(r'\bTOR\b', type_upper) or re.search(r'\bOSA\b', type_upper):
+        is_telar_or_radar = True
+    else:
+        is_telar_or_radar = any(k in type_upper for k in telar_or_radar)
+        
+    is_launcher = any(k in type_upper for k in launcher_only)
+    
+    # 如果它是純發射車或發電機，且「不是」一體防空車（例如 Osa 雖然名字帶 LN 但它是一體的），就不畫威脅圈
+    if is_launcher and not is_telar_or_radar:
+        return None
+        
+    # 如果是搜索雷達，也不畫威脅圈 (避免與火控雷達重疊)
+    if " SR" in type_upper or "64H6E" in type_upper or "9S18" in type_upper or "5N66" in type_upper:
+        return None
+        
+    for key, range_nm in SAM_THREAT_RANGES.items():
+        if key in type_upper:
+            return range_nm
+    return None

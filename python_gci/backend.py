@@ -104,20 +104,25 @@ class GCIBackend:
             to_remove_pending = []
             for uid, (apply_time, is_friendly, data) in self.pending_updates.items():
                 if current_time >= apply_time:
-                    if uid not in self.history:
-                        self.history[uid] = []
+                    is_ground = data.get("category") in [2, 3] # Group.Category.GROUND (2), SHIP (3)
                     
-                    data['history'] = list(self.history[uid])
-                    
+                    if not is_ground:
+                        if uid not in self.history:
+                            self.history[uid] = []
+                        data['history'] = list(self.history[uid])
+                    else:
+                        data['history'] = []
+
                     if is_friendly:
                         self.friendlies[uid] = data
                     else:
                         self.hostiles[uid] = data
                         
-                    # Append current position for the next sweep
-                    self.history[uid].append((data.get("x", 0), data.get("z", 0)))
-                    if len(self.history[uid]) > 10:
-                        self.history[uid].pop(0)
+                    if not is_ground:
+                        # Append current position for the next sweep
+                        self.history[uid].append((data.get("x", 0), data.get("z", 0)))
+                        if len(self.history[uid]) > 10:
+                            self.history[uid].pop(0)
                         
                     to_remove_pending.append(uid)
             
