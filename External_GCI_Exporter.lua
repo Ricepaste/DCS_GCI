@@ -32,6 +32,33 @@ local function getUnitData(unit, is_friendly)
     local groupName = group and group:getName() or ""
     local category = group and group:getCategory() or -1
 
+    local fuel_frac = 0
+    local fuel_mass_max_kg = 0
+    if unit.getFuel then
+        local f = unit:getFuel()
+        if type(f) == "number" then fuel_frac = f end
+    end
+    if unit.getDesc then
+        local desc = unit:getDesc()
+        if desc and desc.fuelMassMax then
+            fuel_mass_max_kg = desc.fuelMassMax
+        end
+    end
+    
+    local weapons = {}
+    if unit.getAmmo then
+        local ammo = unit:getAmmo()
+        if ammo and type(ammo) == "table" then
+            for _, item in pairs(ammo) do
+                local w_name = "Unknown"
+                if item.desc then
+                    w_name = item.desc.displayName or item.desc.typeName or w_name
+                end
+                table.insert(weapons, {name = w_name, count = item.count or 0})
+            end
+        end
+    end
+
     return {
         unit_name = unitName,
         player_name = playerName or "",
@@ -47,7 +74,10 @@ local function getUnitData(unit, is_friendly)
         vy = vel.y,
         vz = vel.z,
         heading = heading,
-        is_friendly = is_friendly
+        is_friendly = is_friendly,
+        fuel_frac = fuel_frac,
+        fuel_mass_max_kg = fuel_mass_max_kg,
+        weapons = weapons
     }
 end
 
@@ -135,11 +165,25 @@ local function export_telemetry_safe(time, args)
                                 local enemyUnit = targetData.object
                                 if enemyUnit and enemyUnit:isExist() and enemyUnit.getCoalition and enemyUnit:getCoalition() == coalition.side.RED then
                                     local uid = enemyUnit:getName()
+                                    local is_distance_known = targetData.distance
+                                    
                                     if not knownHostiles[uid] then
-                                        knownHostiles[uid] = true
-                                        local data = getUnitData(enemyUnit, false)
-                                        if data then
-                                            table.insert(telemetry.hostiles, data)
+                                        knownHostiles[uid] = {
+                                            unit = enemyUnit,
+                                            is_jammed = not is_distance_known,
+                                            detected_by = {}
+                                        }
+                                    else
+                                        if is_distance_known then
+                                            knownHostiles[uid].is_jammed = false
+                                        end
+                                    end
+                                    
+                                    -- 如果仍在被干擾中，記錄是哪些單位探測到這個干擾源
+                                    if knownHostiles[uid].is_jammed then
+                                        local first_unit = group:getUnit(1)
+                                        if first_unit and first_unit:isExist() then
+                                            table.insert(knownHostiles[uid].detected_by, first_unit:getName())
                                         end
                                     end
                                 end
@@ -148,6 +192,17 @@ local function export_telemetry_safe(time, args)
                     end
                 end
             end
+        end
+    end
+    
+    for uid, info in pairs(knownHostiles) do
+        local data = getUnitData(info.unit, false)
+        if data then
+            data.is_jammed = info.is_jammed
+            if info.is_jammed then
+                data.jammed_by = info.detected_by
+            end
+            table.insert(telemetry.hostiles, data)
         end
     end
     

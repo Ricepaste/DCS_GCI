@@ -1,0 +1,42 @@
+name: Build and Release GCI Client
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 pyinstaller pytest
+
+      - name: Run Tests
+        run: |
+          python -m pytest python_gci/tests/ -v
+
+      - name: Build Executable with PyInstaller
+        run: |
+          cd python_gci
+          pyinstaller --windowed --onefile --name GCI_Client app.py
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: python_gci/dist/GCI_Client.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

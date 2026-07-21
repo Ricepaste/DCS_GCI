@@ -62,12 +62,14 @@
   * 支援 **地面速度 (Ground Speed, GS)** 即時顯示。
   * 支援 **靜態 DCS 地圖背景載入** (`python_gci/images/map.png`)，以及**動態向量海岸線與機場資料 (Vector Maps)**。
   * 支援 **多人伺服器玩家 ID 擷取**，真人玩家將顯示專屬 ID 而非機體呼號。
-* **2026-07-21 (GCI 戰術指揮與 UI 擴充)**:
+* **2026-07-21 (GCI 戰術指揮、UI 擴充與多人連線)**:
   * 實作 **ROE (交戰規則) 手動宣告系統**：將敵機分為 `UNKNOWN` (黃色)、`BANDIT` (紅色)、`HOSTILE` (紅色) 級別，雷達光點將根據指揮官的手動宣告改變顏色與縮寫標籤。
   * 擴充 **動態航機懸浮資訊面板 (Status Panel)**：新增 `WEAPONS` 與 `FUEL` 可持久化編輯欄位，支援記錄各航機獨立的戰術筆記。
   * 引入 **自動機型縮寫前綴** (如 `[A]` 代表 AWACS, `[U]`, `[F]`, `[H]`, `[B]`)，並優化了文字圖層置中顯示以解決縮放偏移問題。
   * 實裝 **現代化 GCI 專屬游標 (Custom Cursor)**：自訂螢光綠準星游標並實作滑鼠手動平移 (Manual Panning)，提升擬真戰管操作手感。
   * 新增 **SAM 防空導彈動態威脅圈 (Threat Rings)**：自動識別地面 SAM/防空單位 (S-300, Patriot, Buk, Tor, Kub, Osa, Tunguska 等) 並繪製半透明虛線威脅圈；支援側邊欄專屬按鈕與快捷鍵 `T` 即時 Toggle 切換開關。
+  * 新增 **多人連線架構 (TCP Client-Server)**：支援開房主機 (Host Mode) 廣播雷達資料與連線玩家 (Client Mode) 透過虛擬區域網路 (如 Hamachi) 即時觀看雷達。
+  * 支援 **PyInstaller 自動打包 (`build.ps1`)** 與 **GitHub Actions 自動 Release CI/CD**。
 
 ## 📡 DCS 外部戰場監控系統 (External GCI)
 
@@ -86,10 +88,31 @@
    - 進入 `python_gci` 資料夾。
    - 安裝依賴庫：`pip install -r requirements.txt` (需要 PyQt6)。
    - 啟動雷達介面：`python app.py`。
+   - 在啟動對話框中選擇模式：
+     - **Host Mode (Server)**: 適用於運行 DCS 的主機。
+     - **Client Mode (Connect)**: 適用於連線的朋友，請輸入主機的 Hamachi IP 與 Port (預設 `10088`)。
 2. **DCS 端 (資料匯出)**：
    - 在任務編輯器中，利用 `DO SCRIPT FILE` 掛載 `External_GCI_Exporter.lua`。
    - **注意：** 你的藍軍必須要有雷達單位 (如 AWACS 或 EWR 預警雷達)，因為本腳本強調真實性，只會將「藍軍雷達實際偵測到的目標」匯出到 Python GCI 介面上。
 3. 任務開始後，切換到 Python 視窗，你就能在深色雷達螢幕上即時看到友軍與敵軍的動態航跡了！
+
+### 📦 打包與 GitHub 自動發布 (Build & Release)
+
+#### 1. 本地一鍵打包 (`.exe`)
+在專案根目錄執行 PowerShell 打包腳本：
+```powershell
+.\build.ps1
+```
+腳本會自動安裝 `PyInstaller` 並將程式打包為獨立的 `python_gci/dist/GCI_Client.exe`。朋友可以直接執行，不需安裝 Python。
+
+#### 2. GitHub Actions 自動化發布 (CI/CD)
+本專案已配置 GitHub Actions (`.github/workflows/release.yml`)。
+當你在 Git 中推動一個版本 Tag (例如 `v1.0.0`) 時：
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+GitHub Actions 將會自動觸發 Windows 建置伺服器、執行 Pytest 測試、編譯 `.exe` 執行檔，並自動建立 GitHub Release 且將 `GCI_Client.exe` 附加在發布頁面供人下載！
 
 ### 🗺️ 向量地圖生成工具 (Vector Map Extractor)
 為了讓雷達能夠精準顯示海岸線與機場位置，並且支援 DCS **所有未來的地圖**（高加索、敘利亞、馬里亞納等），我們提供了一套全自動地圖資料掃描與匯出工具。

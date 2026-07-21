@@ -1,7 +1,7 @@
 import sys
 import os
 import math
-from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QDialog, QFormLayout, QTextEdit, QButtonGroup, QLineEdit, QInputDialog, QListWidget, QMessageBox, QGraphicsTextItem, QInputDialog, QListWidget, QMessageBox, QGraphicsTextItem
+from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QDialog, QFormLayout, QTextEdit, QButtonGroup, QLineEdit, QInputDialog, QListWidget, QMessageBox, QGraphicsTextItem, QTabWidget, QDialogButtonBox
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap, QImage, QTransform, QCursor, QIcon
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, QLineF
 from backend import GCIBackend
@@ -70,7 +70,18 @@ class AircraftStatusPanel(QWidget):
         self.class_group.buttonClicked.connect(self.on_class_changed)
         layout.addLayout(class_layout)
         
-        grid = QFormLayout()
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet("""
+            QTabWidget::pane { border: 1px solid #336666; border-radius: 3px; top: -1px; background: transparent; }
+            QTabBar::tab { background: rgba(50,70,70,150); color: #a0c0c0; border: 1px solid #336666; padding: 4px 8px; margin-right: 2px; border-top-left-radius: 3px; border-top-right-radius: 3px; font-weight: bold; }
+            QTabBar::tab:selected { background: #55aaaa; color: black; }
+        """)
+        
+        self.tab_general = QWidget()
+        self.tab_datalink = QWidget()
+        
+        # --- GENERAL TAB ---
+        grid = QFormLayout(self.tab_general)
         grid.setContentsMargins(10, 10, 10, 10)
         grid.setSpacing(8)
         
@@ -81,34 +92,49 @@ class AircraftStatusPanel(QWidget):
         self.lbl_spd = QLabel()
         self.lbl_hdg = QLabel()
         
-        self.edit_weapons = QLineEdit()
-        self.edit_weapons.setPlaceholderText("e.g. 4/2")
-        self.edit_weapons.setStyleSheet("background: rgba(0,0,0,100); color: #e0e0e0; border: 1px solid #336666; border-radius: 3px; padding: 2px;")
-        
-        self.edit_fuel = QLineEdit()
-        self.edit_fuel.setPlaceholderText("e.g. 12000 lbs")
-        self.edit_fuel.setStyleSheet("background: rgba(0,0,0,100); color: #e0e0e0; border: 1px solid #336666; border-radius: 3px; padding: 2px;")
-        
         val_style = "color: #e0e0e0; font-size: 14px; font-weight: bold; border: none; background: transparent;"
         for lbl in [self.lbl_callsign, self.lbl_iff, self.lbl_type, self.lbl_alt, self.lbl_spd, self.lbl_hdg]:
             lbl.setStyleSheet(val_style)
             
         label_style = "color: #558888; font-size: 12px; border: none; background: transparent;"
         
-        def add_row(title, widget):
+        def add_row(parent_layout, title, widget):
             l = QLabel(title)
             l.setStyleSheet(label_style)
-            grid.addRow(l, widget)
+            parent_layout.addRow(l, widget)
             
-        add_row("CALLSIGN", self.lbl_callsign)
-        add_row("IFF", self.lbl_iff)
-        add_row("TYPE", self.lbl_type)
-        add_row("ALTITUDE", self.lbl_alt)
-        add_row("SPEED", self.lbl_spd)
-        add_row("HEADING", self.lbl_hdg)
-        add_row("WEAPONS", self.edit_weapons)
-        add_row("FUEL", self.edit_fuel)
-        layout.addLayout(grid)
+        add_row(grid, "CALLSIGN", self.lbl_callsign)
+        add_row(grid, "IFF", self.lbl_iff)
+        add_row(grid, "TYPE", self.lbl_type)
+        add_row(grid, "ALTITUDE", self.lbl_alt)
+        add_row(grid, "SPEED", self.lbl_spd)
+        add_row(grid, "HEADING", self.lbl_hdg)
+        
+        # --- DATALINK TAB ---
+        dl_layout = QVBoxLayout(self.tab_datalink)
+        dl_layout.setContentsMargins(10, 10, 10, 10)
+        
+        self.lbl_fuel = QLabel("FUEL: N/A")
+        self.lbl_fuel.setStyleSheet(val_style)
+        dl_layout.addWidget(QLabel("INTERNAL FUEL:", styleSheet=label_style))
+        dl_layout.addWidget(self.lbl_fuel)
+        
+        dl_layout.addSpacing(10)
+        dl_layout.addWidget(QLabel("WEAPON STORES:", styleSheet=label_style))
+        
+        self.list_weapons = QListWidget()
+        self.list_weapons.setStyleSheet("""
+            QListWidget {
+                background: rgba(0,0,0,100); color: #e0e0e0; border: 1px solid #336666; border-radius: 3px; padding: 2px;
+                font-size: 13px; font-weight: bold; font-family: Consolas;
+            }
+        """)
+        dl_layout.addWidget(self.list_weapons)
+        
+        self.tabs.addTab(self.tab_general, "GENERAL")
+        self.tabs.addTab(self.tab_datalink, "DATALINK")
+        
+        layout.addWidget(self.tabs)
         
         notes_lbl = QLabel("REMARKS / NOTES")
         notes_lbl.setStyleSheet(label_style)
@@ -210,17 +236,13 @@ class AircraftStatusPanel(QWidget):
         
         if self.current_unit and self.current_unit != name:
             self.global_data[self.current_unit] = {
-                'notes': self.notes_edit.toPlainText(),
-                'weapons': self.edit_weapons.text(),
-                'fuel': self.edit_fuel.text()
+                'notes': self.notes_edit.toPlainText()
             }
             
-        saved = self.global_data.get(name, {'notes': '', 'weapons': '', 'fuel': ''})
+        saved = self.global_data.get(name, {'notes': ''})
         
         if self.current_unit != name:
             self.notes_edit.setPlainText(saved.get('notes', ''))
-            self.edit_weapons.setText(saved.get('weapons', ''))
-            self.edit_fuel.setText(saved.get('fuel', ''))
             
         self.current_unit = name
         
@@ -253,16 +275,50 @@ class AircraftStatusPanel(QWidget):
         speed_kts = calculate_speed(data['vx'], data['vz'])
         self.lbl_spd.setText(f"{speed_kts} GS")
         
-        hdg = math.degrees(math.atan2(data['vx'], data['vz']))
-        if hdg < 0: hdg += 360
-        self.lbl_hdg.setText(f"{int(hdg):03d}°")
+        hdg_deg = int(math.degrees(data['heading']))
+        if hdg_deg < 0: hdg_deg += 360
+        self.lbl_hdg.setText(f"{hdg_deg:03d}°")
+        
+        # Datalink Updates
+        is_ground = data.get("category") in [2, 3]
+        if is_hostile or is_ground:
+            self.lbl_fuel.setText("N/A")
+            self.lbl_fuel.setStyleSheet("color: #777777; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+            self.list_weapons.clear()
+            self.list_weapons.addItem("DATALINK UNAVAILABLE")
+        else:
+            fuel_frac = data.get("fuel_frac", 0)
+            fuel_max_kg = data.get("fuel_mass_max_kg", 0)
+            if fuel_frac > 0:
+                fuel_pct = int(fuel_frac * 100)
+                color = "#55ff55" if fuel_pct >= 50 else ("#ffff55" if fuel_pct >= 30 else "#ff5555")
+                
+                if fuel_max_kg > 0:
+                    current_kg = int(fuel_frac * fuel_max_kg)
+                    current_lbs = int(current_kg * 2.20462)
+                    self.lbl_fuel.setText(f"{fuel_pct}% ({current_lbs} lbs / {current_kg} kg)")
+                else:
+                    self.lbl_fuel.setText(f"{fuel_pct}%")
+                    
+                self.lbl_fuel.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+            else:
+                self.lbl_fuel.setText("N/A")
+                self.lbl_fuel.setStyleSheet("color: #777777; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+                
+            weapons = data.get("weapons", [])
+            self.list_weapons.clear()
+            if weapons:
+                for w in weapons:
+                    count = w.get("count", 0)
+                    name = w.get("name", "Unknown")
+                    self.list_weapons.addItem(f"{count:2d} x {name}")
+            else:
+                self.list_weapons.addItem("CLEAN (NO STORES)")
         
     def closeEvent(self, event):
         if self.current_unit:
             self.global_data[self.current_unit] = {
-                'notes': self.notes_edit.toPlainText(),
-                'weapons': self.edit_weapons.text(),
-                'fuel': self.edit_fuel.text()
+                'notes': self.notes_edit.toPlainText()
             }
         self.current_unit = None
         super().closeEvent(event)
@@ -1227,6 +1283,8 @@ class RadarView(QGraphicsView):
                         self.threat_text_items.pop(name, None)
                 for dot in items.get('history_dots', []):
                     self.scene.removeItem(dot)
+                for line in items.get('jam_lines', []):
+                    self.scene.removeItem(line)
 
         # 自動置中於第一個友軍 (僅執行一次)
         if not hasattr(self, 'has_centered') and tracks['friendlies']:
@@ -1415,8 +1473,14 @@ class RadarView(QGraphicsView):
                 if hasattr(self, 'threat_text_items'):
                     self.threat_text_items.pop(name, None)
                 
-        # 如果是地面單位，隱藏所有航跡圖示與文字，且不處理殘影 (只顯示威脅圈)
-        if is_ground:
+        # ECM Jamming Logic & 地面單位過濾
+        is_jammed = data.get('is_jammed', False)
+        
+        # 處理 Jam lines 初始化
+        if 'jam_lines' not in items:
+            items['jam_lines'] = []
+            
+        if is_jammed or is_ground:
             items['icon'].hide()
             items['line'].hide()
             items['text'].hide()
@@ -1424,7 +1488,40 @@ class RadarView(QGraphicsView):
                 items['class_text'].hide()
             for dot in items.get('history_dots', []):
                 dot.hide()
+            
+            # 針對 ECM 開啟的干擾目標，畫出從預警機出發的干擾射線
+            if is_jammed and not is_ground:
+                jammed_by = data.get('jammed_by', [])
+                # 確保線條數量
+                while len(items['jam_lines']) > len(jammed_by):
+                    l = items['jam_lines'].pop()
+                    self.scene.removeItem(l)
+                while len(items['jam_lines']) < len(jammed_by):
+                    pen = QPen(QColor(255, 255, 0, 200), 2, Qt.PenStyle.DashLine)
+                    l = self.scene.addLine(0, 0, 0, 0, pen)
+                    l.setZValue(2)
+                    items['jam_lines'].append(l)
+                    
+                # 更新干擾線的位置
+                all_tracks = self.backend.get_tracks()
+                friendlies = all_tracks.get('friendlies', [])
+                for i, friendly_name in enumerate(jammed_by):
+                    friendly_data = next((f for f in friendlies if f['unit_name'] == friendly_name), None)
+                    if friendly_data:
+                        f_sx, f_sy = self.dcs_to_scene(friendly_data['x'], friendly_data['z'])
+                        # 射線延伸到很遠的地方 (模擬無限遠)
+                        # 從友軍座標往敵軍座標的方向拉長 20000 像素
+                        angle = math.atan2(sy - f_sy, sx - f_sx)
+                        end_x = f_sx + math.cos(angle) * 20000
+                        end_y = f_sy + math.sin(angle) * 20000
+                        items['jam_lines'][i].setLine(f_sx, f_sy, end_x, end_y)
+                        items['jam_lines'][i].show()
+            else:
+                for l in items['jam_lines']: l.hide()
             return
+            
+        # 如果不是被干擾也不是地面單位，清除干擾射線並顯示圖示
+        for l in items.get('jam_lines', []): l.hide()
             
         items['icon'].show()
         items['line'].show()
@@ -1686,12 +1783,80 @@ def create_gci_cursor():
     
     return QCursor(pixmap, hotX=int(c), hotY=int(c))
 
+class NetworkDialog(QDialog):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("GCI Network Setup")
+        self.setFixedSize(350, 200)
+        self.mode = "client"
+        
+        layout = QVBoxLayout(self)
+        
+        self.lbl_info = QLabel("Select Mode:")
+        layout.addWidget(self.lbl_info)
+        
+        mode_layout = QHBoxLayout()
+        self.btn_client = QPushButton("Client Mode (Connect)")
+        self.btn_host = QPushButton("Host Mode (Server)")
+        self.btn_client.setCheckable(True)
+        self.btn_host.setCheckable(True)
+        self.btn_client.setChecked(True)
+        
+        self.btn_client.clicked.connect(self.set_client_mode)
+        self.btn_host.clicked.connect(self.set_host_mode)
+        
+        mode_layout.addWidget(self.btn_client)
+        mode_layout.addWidget(self.btn_host)
+        layout.addLayout(mode_layout)
+        
+        form_layout = QFormLayout()
+        self.ip_input = QLineEdit("127.0.0.1")
+        self.port_input = QLineEdit("10088")
+        form_layout.addRow("Host IP (Hamachi):", self.ip_input)
+        form_layout.addRow("TCP Port:", self.port_input)
+        layout.addLayout(form_layout)
+        
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+        
+    def set_client_mode(self):
+        self.mode = "client"
+        self.btn_client.setChecked(True)
+        self.btn_host.setChecked(False)
+        self.ip_input.setEnabled(True)
+        self.ip_input.setText("127.0.0.1")
+        
+    def set_host_mode(self):
+        self.mode = "host"
+        self.btn_host.setChecked(True)
+        self.btn_client.setChecked(False)
+        self.ip_input.setEnabled(False)
+        self.ip_input.setText("0.0.0.0 (Local Server)")
+
 def run_app():
-    backend = GCIBackend(host="0.0.0.0")
-    backend.start()
-    
     app = QApplication(sys.argv)
     app.setOverrideCursor(create_gci_cursor())
+    
+    dialog = NetworkDialog()
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        sys.exit(0)
+        
+    mode = dialog.mode
+    port = int(dialog.port_input.text())
+    
+    if mode == "host":
+        from backend import GCIServer
+        server = GCIServer(tcp_host="0.0.0.0", tcp_port=port, udp_port=port)
+        server.start()
+        # Connect client to localhost
+        backend = GCIBackend(host="127.0.0.1", port=port)
+    else:
+        ip = dialog.ip_input.text()
+        backend = GCIBackend(host=ip, port=port)
+        
+    backend.start()
     
     window = GCIMainWindow(backend)
     window.show()
