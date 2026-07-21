@@ -4,7 +4,7 @@ import threading
 import time
 
 class GCIBackend:
-    def __init__(self, host="0.0.0.0", port=10082, stagger_updates=True):
+    def __init__(self, host="0.0.0.0", port=10088, stagger_updates=True):
         self.host = host
         self.port = port
         self.stagger_updates = stagger_updates
@@ -30,7 +30,7 @@ class GCIBackend:
         if not self.stagger_updates:
             return 0.0
         # Deterministic delay between 0.0 and 3.9 seconds based on unit name
-        checksum = sum(ord(c) for c in uid)
+        checksum = sum(ord(c) for c in str(uid))
         return (checksum % 40) / 10.0
 
     def start(self):
@@ -53,11 +53,19 @@ class GCIBackend:
             except socket.timeout:
                 pass
             except json.JSONDecodeError:
-                print("Failed to decode JSON from DCS")
+                with open("backend.log", "a") as f:
+                    f.write(f"[{time.time()}] Failed to decode JSON from DCS\n")
             except Exception as e:
-                print(f"Error in backend: {e}")
+                with open("backend.log", "a") as f:
+                    f.write(f"[{time.time()}] Error in backend: {e}\n")
+        
+        with open("backend.log", "a") as f:
+            f.write(f"[{time.time()}] Thread stopped.\n")
 
     def parse_telemetry(self, json_str):
+        with open("backend.log", "a") as f:
+            f.write(f"[{time.time()}] Received payload of length {len(json_str)}\n")
+        
         telemetry = json.loads(json_str)
         current_time = time.time()
         
@@ -68,14 +76,22 @@ class GCIBackend:
             for f in telemetry.get("friendlies", []):
                 uid = f.get("unit_name")
                 self.last_seen_time[uid] = current_time
-                delay = self._get_stagger_delay(uid)
-                self.pending_updates[uid] = (current_time + delay, True, f)
+                if uid in self.pending_updates:
+                    old_apply_time, _, _ = self.pending_updates[uid]
+                    self.pending_updates[uid] = (old_apply_time, True, f)
+                else:
+                    delay = self._get_stagger_delay(uid)
+                    self.pending_updates[uid] = (current_time + delay, True, f)
                 
             for h in telemetry.get("hostiles", []):
                 uid = h.get("unit_name")
                 self.last_seen_time[uid] = current_time
-                delay = self._get_stagger_delay(uid)
-                self.pending_updates[uid] = (current_time + delay, False, h)
+                if uid in self.pending_updates:
+                    old_apply_time, _, _ = self.pending_updates[uid]
+                    self.pending_updates[uid] = (old_apply_time, False, h)
+                else:
+                    delay = self._get_stagger_delay(uid)
+                    self.pending_updates[uid] = (current_time + delay, False, h)
                 
             self.airbases = telemetry.get("airbases", [])
             self.last_update_time = current_time

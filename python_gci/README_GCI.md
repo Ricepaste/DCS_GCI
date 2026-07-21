@@ -19,5 +19,8 @@
 ## Features
 - **Realistic Detections:** Enemy aircraft are only drawn if a Blue coalition radar can physically see them.
 - **Modern UI:** Built on PyQt6 with a dark, high-performance radar scope.
-- **Velocity Vectors:** Shows heading and speed for all tracks.
-- **Altitude Tags:** Displays altitude in thousands of feet (Flight Level).
+- **Tactical Symbology (MIL-STD-2525D):** Standardized APP-6D shapes for friendlies (circle), hostiles (diamond), and unknowns (square).
+- **Link 16 Data Blocks:** Standardized 3-line format (TN/Type, Flight Level, Ground Speed) with Player ID integration.
+- **Advanced Intercept Geometry:** Draw intercept vectors between targets and view projected Impact Point, Cut Heading, and Time-To-Intercept (TTI) dynamically.
+- **Dynamic Tactical Airspace (ROZ/CAP):** Draw custom polygons on the map during operations.
+- **Custom Bullseye & Coordinate Tracking:** Place a custom Bullseye reference point and track cursor coordinates in both Lat/Lon (DMS) and MGRS (10km grid overlay).

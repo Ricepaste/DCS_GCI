@@ -1,17 +1,19 @@
 import sys
 import os
 import math
-from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QDialog, QFormLayout, QTextEdit, QButtonGroup, QLineEdit
+from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QDialog, QFormLayout, QTextEdit, QButtonGroup, QLineEdit, QInputDialog, QListWidget, QMessageBox, QGraphicsTextItem, QInputDialog, QListWidget, QMessageBox, QGraphicsTextItem
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap, QImage, QTransform, QCursor, QIcon
-from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF
+from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, QLineF
 from backend import GCIBackend
 from geometry import calculate_braa, calculate_speed, to_dms, sync_ordered_selection
+import geometry
 
-class AircraftStatusPanel(QDialog):
+class AircraftStatusPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("SYS TRACK")
-        self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.hide()
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(320, 360)
         
@@ -133,15 +135,48 @@ class AircraftStatusPanel(QDialog):
         self._is_dragging = False
         self._drag_pos = None
 
+    
+    def finalize_airspace_naming(self, name):
+        original_name = name
+        counter = 1
+        while name in self.airspaces:
+            name = f"{original_name} ({counter})"
+            counter += 1
+            
+        text_item = self.scene.addText(name)
+        text_item.setDefaultTextColor(QColor(255, 200, 200))
+        text_item.setZValue(-4)
+        from PyQt6.QtGui import QFont
+        font = QFont("Consolas", 14, QFont.Weight.Bold)
+        text_item.setFont(font)
+        
+        center = self._temp_airspace_poly.boundingRect().center()
+        text_item.setPos(center.x() - text_item.boundingRect().width()/2, center.y() - text_item.boundingRect().height()/2)
+        text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        
+        self.airspaces[name] = {"poly": self._temp_airspace_item, "text": text_item}
+        self._temp_airspace_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        text_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        
+        self._is_drawing_airspace = False
+        self._current_airspace_pts = []
+        self._current_airspace_line = None
+        self._temp_airspace_item = None
+        self._temp_airspace_poly = None
+        self.unsetCursor()
+        if hasattr(self, 'main_window'):
+            self.main_window.statusBar().showMessage("Airspace saved.")
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._is_dragging = True
-            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self._drag_pos = event.position().toPoint()
             event.accept()
 
     def mouseMoveEvent(self, event):
         if self._is_dragging:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            if self.parent():
+                self.move(self.mapToParent(event.position().toPoint()) - self._drag_pos)
             event.accept()
 
     def mouseReleaseEvent(self, event):
@@ -155,7 +190,10 @@ class AircraftStatusPanel(QDialog):
             elif cls_str == "HST": cls = "HOSTILE"
             elif cls_str == "BND": cls = "BANDIT"
             
-            self.parent().set_track_classification(self.current_unit, cls)
+            if hasattr(self, 'radar') and self.radar:
+                self.radar.set_track_classification(self.current_unit, cls)
+            elif hasattr(self.parent(), 'set_track_classification'):
+                self.parent().set_track_classification(self.current_unit, cls)
             self.refresh_ui_colors(cls)
             
     def refresh_ui_colors(self, cls):
@@ -229,6 +267,276 @@ class AircraftStatusPanel(QDialog):
         self.current_unit = None
         super().closeEvent(event)
 
+
+
+
+
+class AirspaceNameInput(QWidget):
+    def __init__(self, radar_view, parent=None):
+        super().__init__(parent)
+        self.radar_view = radar_view
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.resize(250, 100)
+        
+        self.setStyleSheet("""
+            QWidget {
+                background-color: rgba(15, 25, 20, 230);
+                border: 1px solid #336666;
+                border-radius: 5px;
+                color: #55aaaa;
+                font-family: Consolas;
+            }
+            QLineEdit {
+                background-color: #0d1a15;
+                border: 1px solid #55aaaa;
+                color: white;
+                padding: 4px;
+            }
+            QPushButton {
+                background-color: #162420;
+                border: 1px solid #2a4035;
+                color: #b4ffb4;
+                padding: 4px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #2a4035;
+                border: 1px solid #b4ffb4;
+            }
+        """)
+        
+        layout = QVBoxLayout(self)
+        
+        title = QLabel("Enter Airspace Name:")
+        title.setStyleSheet("font-weight: bold; border: none; background: transparent;")
+        layout.addWidget(title)
+        
+        self.input = QLineEdit()
+        self.input.returnPressed.connect(self.accept)
+        layout.addWidget(self.input)
+        
+        btn_layout = QHBoxLayout()
+        self.btn_ok = QPushButton("OK")
+        self.btn_ok.clicked.connect(self.accept)
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.clicked.connect(self.reject)
+        
+        btn_layout.addWidget(self.btn_ok)
+        btn_layout.addWidget(self.btn_cancel)
+        layout.addLayout(btn_layout)
+        
+        self._drag_pos = None
+        self._is_dragging = False
+        
+    
+    def finalize_airspace_naming(self, name):
+        original_name = name
+        counter = 1
+        while name in self.airspaces:
+            name = f"{original_name} ({counter})"
+            counter += 1
+            
+        text_item = self.scene.addText(name)
+        text_item.setDefaultTextColor(QColor(255, 200, 200))
+        text_item.setZValue(-4)
+        from PyQt6.QtGui import QFont
+        font = QFont("Consolas", 14, QFont.Weight.Bold)
+        text_item.setFont(font)
+        
+        center = self._temp_airspace_poly.boundingRect().center()
+        text_item.setPos(center.x() - text_item.boundingRect().width()/2, center.y() - text_item.boundingRect().height()/2)
+        text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        
+        self.airspaces[name] = {"poly": self._temp_airspace_item, "text": text_item}
+        self._temp_airspace_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        text_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        
+        self._is_drawing_airspace = False
+        self._current_airspace_pts = []
+        self._current_airspace_line = None
+        self._temp_airspace_item = None
+        self._temp_airspace_poly = None
+        self.unsetCursor()
+        if hasattr(self, 'main_window'):
+            self.main_window.statusBar().showMessage("Airspace saved.")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = True
+            self._drag_pos = event.position().toPoint()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and self.parent():
+            self.move(self.mapToParent(event.position().toPoint()) - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+        
+    def accept(self):
+        name = self.input.text().strip()
+        if not name:
+            name = f"Airspace {len(self.radar_view.airspaces) + 1}"
+        self.radar_view.finalize_airspace_naming(name)
+        self.close()
+        
+    def reject(self):
+        if hasattr(self.radar_view, '_temp_airspace_item') and self.radar_view._temp_airspace_item:
+            try:
+                self.radar_view.scene.removeItem(self.radar_view._temp_airspace_item)
+            except:
+                pass
+        self.radar_view._is_drawing_airspace = False
+        self.radar_view._current_airspace_pts = []
+        self.radar_view._current_airspace_line = None
+        self.radar_view._temp_airspace_item = None
+        self.radar_view._temp_airspace_poly = None
+        self.radar_view.unsetCursor()
+        self.close()
+
+    def showEvent(self, event):
+        self.input.setFocus()
+        super().showEvent(event)
+
+class AirspaceManagerPanel(QWidget):
+    def __init__(self, radar_view, parent=None):
+        super().__init__(parent)
+        self.radar_view = radar_view
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.resize(300, 400)
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.container = QWidget()
+        self.container.setStyleSheet("""
+            QWidget {
+                background-color: rgba(15, 25, 20, 230);
+                border: 1px solid #336666;
+                border-radius: 5px;
+                color: #b4ffb4;
+                font-family: Consolas;
+            }
+            QListWidget {
+                background-color: #162420;
+                color: #b4ffb4;
+                border: 1px solid #2a4035;
+            }
+            QListWidget::item:selected {
+                background-color: #2a4035;
+            }
+        """)
+        
+        layout = QVBoxLayout(self.container)
+        
+        header_layout = QHBoxLayout()
+        self.lbl_title = QLabel("Airspace Manager")
+        self.lbl_title.setStyleSheet("font-weight: bold; font-size: 14px; border: none; background: transparent;")
+        
+        self.btn_close = QPushButton("X")
+        self.btn_close.setFixedSize(20, 20)
+        self.btn_close.setStyleSheet("""
+            QPushButton { background-color: transparent; border: none; color: #ff5555; font-weight: bold; }
+            QPushButton:hover { background-color: #ff5555; color: white; }
+        """)
+        self.btn_close.clicked.connect(self.close)
+        
+        header_layout.addWidget(self.lbl_title)
+        header_layout.addStretch()
+        header_layout.addWidget(self.btn_close)
+        layout.addLayout(header_layout)
+        
+        self.list_widget = QListWidget()
+        self.list_widget.addItems(self.radar_view.airspaces.keys())
+        layout.addWidget(self.list_widget)
+        
+        self.btn_delete = QPushButton("Delete Selected")
+        self.btn_delete.setStyleSheet("""
+            QPushButton {
+                background-color: #aa3333; 
+                color: white; 
+                border: 1px solid #ff5555;
+                padding: 5px; 
+                font-weight: bold;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #ff5555;
+            }
+        """)
+        self.btn_delete.clicked.connect(self.delete_selected)
+        layout.addWidget(self.btn_delete)
+        
+        main_layout.addWidget(self.container)
+        
+        self._drag_pos = None
+        self._is_dragging = False
+        
+    
+    def finalize_airspace_naming(self, name):
+        original_name = name
+        counter = 1
+        while name in self.airspaces:
+            name = f"{original_name} ({counter})"
+            counter += 1
+            
+        text_item = self.scene.addText(name)
+        text_item.setDefaultTextColor(QColor(255, 200, 200))
+        text_item.setZValue(-4)
+        from PyQt6.QtGui import QFont
+        font = QFont("Consolas", 14, QFont.Weight.Bold)
+        text_item.setFont(font)
+        
+        center = self._temp_airspace_poly.boundingRect().center()
+        text_item.setPos(center.x() - text_item.boundingRect().width()/2, center.y() - text_item.boundingRect().height()/2)
+        text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        
+        self.airspaces[name] = {"poly": self._temp_airspace_item, "text": text_item}
+        self._temp_airspace_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        text_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        
+        self._is_drawing_airspace = False
+        self._current_airspace_pts = []
+        self._current_airspace_line = None
+        self._temp_airspace_item = None
+        self._temp_airspace_poly = None
+        self.unsetCursor()
+        if hasattr(self, 'main_window'):
+            self.main_window.statusBar().showMessage("Airspace saved.")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = True
+            self._drag_pos = event.position().toPoint()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and self.parent():
+            self.move(self.mapToParent(event.position().toPoint()) - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+        
+    def delete_selected(self):
+        selected = self.list_widget.currentItem()
+        if not selected:
+            return
+        
+        name = selected.text()
+        if name in self.radar_view.airspaces:
+            data = self.radar_view.airspaces[name]
+            self.radar_view.scene.removeItem(data['poly'])
+            if 'text' in data and data['text']:
+                self.radar_view.scene.removeItem(data['text'])
+            del self.radar_view.airspaces[name]
+            
+        self.list_widget.takeItem(self.list_widget.row(selected))
+
+
 class RadarView(QGraphicsView):
     def __init__(self, backend):
         super().__init__()
@@ -246,6 +554,9 @@ class RadarView(QGraphicsView):
         # 隱藏滾動條，保持畫面潔淨
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
         
         self.track_items = {}
         self.checked_in_tracks = set()
@@ -279,7 +590,29 @@ class RadarView(QGraphicsView):
                     if len(parts) >= 3:
                         name, bx, bz = parts[0], float(parts[1]), float(parts[2])
                         course = float(parts[3]) if len(parts) >= 4 else 0
-                        self.airbases[name] = {"x": bx, "z": bz, "course": course}
+                        lat = float(parts[4]) if len(parts) >= 6 else None
+                        lon = float(parts[5]) if len(parts) >= 6 else None
+                        self.airbases[name] = {"x": bx, "z": bz, "course": course, "lat": lat, "lon": lon}
+        
+        # 建立全局投影基準點 (Global Reference Point)
+        # 選擇離所有機場幾何中心最近的機場作為固定投影中心，
+        # 最小化橫麥卡托投影在地圖邊緣的失真。
+        self.global_ref_point = None
+        valid_airbases = [ab for ab in self.airbases.values()
+                          if ab.get('lat') is not None and ab.get('lon') is not None]
+        if valid_airbases:
+            # 計算所有機場 DCS 座標的幾何中心
+            avg_x = sum(ab['x'] for ab in valid_airbases) / len(valid_airbases)
+            avg_z = sum(ab['z'] for ab in valid_airbases) / len(valid_airbases)
+            # 選擇離幾何中心最近的機場
+            best = None
+            best_dist = float('inf')
+            for ab in valid_airbases:
+                d = (ab['x'] - avg_x)**2 + (ab['z'] - avg_z)**2
+                if d < best_dist:
+                    best_dist = d
+                    best = ab
+            self.global_ref_point = best
                         
         self.draw_airbases()
         
@@ -332,7 +665,34 @@ class RadarView(QGraphicsView):
         self.osd_braa.setText("")
         self.osd_braa.hide()
         
+        # 碰撞預測點 (Impact Point)
+        self.impact_point = self.scene.addEllipse(-4, -4, 8, 8, QPen(QColor(255, 150, 50)), QBrush(Qt.BrushStyle.NoBrush))
+        self.impact_point.setZValue(25)
+        self.impact_point.hide()
+        
+        # OSD: Intercept 面板
+        self.osd_intercept = QLabel(self)
+        self.osd_intercept.setStyleSheet("color: #FFAA33; font-family: Consolas; font-size: 14px; background-color: rgba(0, 0, 0, 150); padding: 5px; border-radius: 5px;")
+        self.osd_intercept.setText("")
+        self.osd_intercept.hide()
+        
         self.scale(0.01, 0.01)
+        
+        # 靶眼標記 (Bullseye)
+        self.bullseye_item = self.scene.addEllipse(-10, -10, 20, 20, QPen(QColor(0, 150, 255), 2), QBrush(Qt.BrushStyle.NoBrush))
+        self.bullseye_center = self.scene.addEllipse(-2, -2, 4, 4, QPen(Qt.PenStyle.NoPen), QBrush(QColor(0, 150, 255)))
+        self.bullseye_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self.bullseye_center.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self.bullseye_item.setZValue(5)
+        self.bullseye_center.setZValue(5)
+        self.bullseye_item.hide()
+        self.bullseye_center.hide()
+        self.bullseye_pos = None
+
+        # 空域多邊形
+        self.airspaces = {}
+        self._current_airspace_pts = []
+        self._current_airspace_line = None
         
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_tracks)
@@ -342,6 +702,7 @@ class RadarView(QGraphicsView):
         super().resizeEvent(event)
         # 固定在左下角，留出 20px 邊距
         self.osd_braa.move(20, self.viewport().height() - self.osd_braa.height() - 20)
+        self.osd_intercept.move(self.viewport().width() - self.osd_intercept.width() - 20, self.viewport().height() - self.osd_intercept.height() - 20)
 
     def wheelEvent(self, event):
         zoomInFactor = 1.15
@@ -419,38 +780,190 @@ class RadarView(QGraphicsView):
         for item in self.airbase_items:
             item.setVisible(self.show_airbases)
             
+    def toggle_set_bullseye(self):
+        self._is_setting_bullseye = True
+        self._is_drawing_airspace = False
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        if hasattr(self, 'main_window'):
+            self.main_window.statusBar().showMessage("Click on map to set Bullseye...")
+
+    def toggle_draw_airspace(self):
+        self._is_drawing_airspace = True
+        self._is_setting_bullseye = False
+        self._current_airspace_pts = []
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        if hasattr(self, 'main_window'):
+            self.main_window.statusBar().showMessage("Left click to add points, Right click to finish airspace.")
+            
     def toggle_all_labels(self):
         self.global_labels_expanded = not self.global_labels_expanded
         if not self.global_labels_expanded:
             self.expanded_labels.clear() # 關閉全局時，順便重置個別展開狀態
+        self.setScene(self.scene)
+        
+    def drawBackground(self, painter, rect):
+        super().drawBackground(painter, rect)
             
+    
+    def finalize_airspace_naming(self, name):
+        original_name = name
+        counter = 1
+        while name in self.airspaces:
+            name = f"{original_name} ({counter})"
+            counter += 1
+            
+        text_item = self.scene.addText(name)
+        text_item.setDefaultTextColor(QColor(255, 200, 200))
+        text_item.setZValue(-4)
+        from PyQt6.QtGui import QFont
+        font = QFont("Consolas", 14, QFont.Weight.Bold)
+        text_item.setFont(font)
+        
+        center = self._temp_airspace_poly.boundingRect().center()
+        text_item.setPos(center.x() - text_item.boundingRect().width()/2, center.y() - text_item.boundingRect().height()/2)
+        text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        
+        self.airspaces[name] = {"poly": self._temp_airspace_item, "text": text_item}
+        self._temp_airspace_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        text_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        
+        self._is_drawing_airspace = False
+        self._current_airspace_pts = []
+        self._current_airspace_line = None
+        self._temp_airspace_item = None
+        self._temp_airspace_poly = None
+        self.unsetCursor()
+        if hasattr(self, 'main_window'):
+            self.main_window.statusBar().showMessage("Airspace saved.")
+
     def mousePressEvent(self, event):
+        if getattr(self, '_is_setting_bullseye', False):
+            if event.button() == Qt.MouseButton.LeftButton:
+                pos = self.mapToScene(event.position().toPoint())
+                self.bullseye_pos = pos
+                self.bullseye_item.setPos(pos)
+                self.bullseye_center.setPos(pos)
+                self.bullseye_item.show()
+                self.bullseye_center.show()
+                self._is_setting_bullseye = False
+                if hasattr(self, 'main_window'):
+                    self.main_window.statusBar().showMessage("Bullseye set.")
+                self.unsetCursor()
+            return
+            
+        if getattr(self, '_is_drawing_airspace', False):
+            if event.button() == Qt.MouseButton.LeftButton:
+                pos = self.mapToScene(event.position().toPoint())
+                self._current_airspace_pts.append(pos)
+                if len(self._current_airspace_pts) > 1:
+                    # Draw a temporary line for preview
+                    if self._current_airspace_line:
+                        self.scene.removeItem(self._current_airspace_line)
+                    poly = QPolygonF(self._current_airspace_pts)
+                    pen = QPen(QColor(255, 100, 100), 2, Qt.PenStyle.DashLine)
+                    pen.setCosmetic(True)
+                    self._current_airspace_line = self.scene.addPolygon(poly, pen, QBrush(Qt.BrushStyle.NoBrush))
+                    self._current_airspace_line.setZValue(-5)
+            elif event.button() == Qt.MouseButton.RightButton:
+                if len(self._current_airspace_pts) > 2:
+                    if self._current_airspace_line:
+                        try:
+                            self.scene.removeItem(self._current_airspace_line)
+                        except:
+                            pass
+                        self._current_airspace_line = None
+                    
+                    self._is_drawing_airspace = False
+                    
+                    poly = QPolygonF(self._current_airspace_pts)
+                    pen = QPen(QColor(255, 100, 100), 2)
+                    pen.setCosmetic(True)
+                    item = self.scene.addPolygon(poly, pen, QBrush(QColor(255, 100, 100, 50)))
+                    item.setZValue(-5)
+                    
+                    self._temp_airspace_poly = poly
+                    self._temp_airspace_item = item
+                    
+                    if not hasattr(self, 'name_input') or not self.name_input:
+                        parent_widget = self.main_window.centralWidget() if hasattr(self, 'main_window') else self
+                        self.name_input = AirspaceNameInput(self, parent_widget)
+                        
+                    self.name_input.input.clear()
+                    self.name_input.show()
+                    self.name_input.raise_()
+                    # Center the input dialog in the view
+                    vp_rect = self.viewport().rect()
+                    self.name_input.move(vp_rect.center().x() - 125, vp_rect.center().y() - 50)
+                return
+
+        if event.button() == Qt.MouseButton.RightButton:
+            self._is_ruler = True
+            self._ruler_start = self.mapToScene(event.position().toPoint())
+            self.ruler_line.setLine(self._ruler_start.x(), self._ruler_start.y(), self._ruler_start.x(), self._ruler_start.y())
+            self.ruler_line.show()
+            self.ruler_text.setPlainText("")
+            self.ruler_text.setPos(self._ruler_start)
+            self.ruler_text.show()
+            return
+            
         item = self.itemAt(event.position().toPoint())
         if item:
-            for name, items in self.track_items.items():
-                if item == items['icon'] or item == items['text'] or item == items.get('class_text'):
-                    if name in self.expanded_labels:
-                        self.expanded_labels.remove(name)
-                    else:
-                        self.expanded_labels.add(name)
-                    break
+            if event.button() == Qt.MouseButton.LeftButton:
+                for name, items in self.track_items.items():
+                    if item == items['icon'] or item == items['text'] or item == items.get('class_text'):
+                        if name in self.expanded_labels:
+                            self.expanded_labels.remove(name)
+                        else:
+                            self.expanded_labels.add(name)
+                        break
         else:
             if event.button() == Qt.MouseButton.LeftButton:
                 self._is_panning = True
                 self._pan_start = event.position().toPoint()
                 return
-            elif event.button() == Qt.MouseButton.RightButton:
-                self._is_ruler = True
-                self._ruler_start = self.mapToScene(event.position().toPoint())
-                self.ruler_line.setLine(self._ruler_start.x(), self._ruler_start.y(), self._ruler_start.x(), self._ruler_start.y())
-                self.ruler_line.show()
-                self.ruler_text.setPlainText("")
-                self.ruler_text.setPos(self._ruler_start)
-                self.ruler_text.show()
-                return
         super().mousePressEvent(event)
         
     def mouseMoveEvent(self, event):
+        current_pos = self.mapToScene(event.position().toPoint())
+        
+        dcs_dz = current_pos.x()
+        dcs_dx = -current_pos.y()
+        
+        if hasattr(self, 'main_window'):
+            # 使用全局固定基準點進行座標投影 (消除動態切換導致的座標偏差)
+            ref = getattr(self, 'global_ref_point', None)
+            
+            if ref:
+                lat, lon = geometry.dcs_to_latlon(dcs_dx, dcs_dz, ref['x'], ref['z'], ref['lat'], ref['lon'])
+                latlon_str = geometry.to_dms(lat, True) + " " + geometry.to_dms(lon, False)
+                mgrs_str = geometry.latlon_to_mgrs(lat, lon)
+                
+                be_str = ""
+                if hasattr(self, 'bullseye_pos') and self.bullseye_pos:
+                    # 使用測地線 (Geodesic) 計算真實方位與距離
+                    bx = -self.bullseye_pos.y()
+                    bz = self.bullseye_pos.x()
+                    # DCS 網格方位 (Grid Bearing) — 與 DCS F10 地圖一致
+                    dx = dcs_dx - bx  # 北向差 (DCS X)
+                    dz = dcs_dz - bz  # 東向差 (DCS Z)
+                    brg = (math.degrees(math.atan2(dz, dx)) + 360) % 360
+                    rng = math.hypot(dx, dz) / 1852.0
+                    be_str = f" | B/E: {int(brg):03d}° / {rng:.1f} NM"
+                
+                self.main_window.statusBar().showMessage(f"Cursor: {latlon_str} | MGRS: {mgrs_str}{be_str}")
+            else:
+                self.main_window.statusBar().showMessage("Cursor: No Reference Data")
+
+        if getattr(self, '_is_drawing_airspace', False) and len(self._current_airspace_pts) > 0:
+            preview_pts = self._current_airspace_pts + [current_pos]
+            if self._current_airspace_line:
+                self.scene.removeItem(self._current_airspace_line)
+            poly = QPolygonF(preview_pts)
+            pen = QPen(QColor(255, 100, 100), 2, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            self._current_airspace_line = self.scene.addPolygon(poly, pen, QBrush(Qt.BrushStyle.NoBrush))
+            self._current_airspace_line.setZValue(-5)
+
         if getattr(self, '_is_panning', False):
             delta = event.position().toPoint() - self._pan_start
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
@@ -458,17 +971,22 @@ class RadarView(QGraphicsView):
             self._pan_start = event.position().toPoint()
             return
         elif getattr(self, '_is_ruler', False):
-            current_pos = self.mapToScene(event.position().toPoint())
             self.ruler_line.setLine(self._ruler_start.x(), self._ruler_start.y(), current_pos.x(), current_pos.y())
             
-            scene_dx = current_pos.x() - self._ruler_start.x()
-            scene_dy = current_pos.y() - self._ruler_start.y()
+            # 起點與終點的 DCS 座標 (DCS X=北, Z=東, 單位=公尺)
+            start_dcs_dz = self._ruler_start.x()
+            start_dcs_dx = -self._ruler_start.y()
+            end_dcs_dz = current_pos.x()
+            end_dcs_dx = -current_pos.y()
             
-            # Convert scene back to DCS
-            dcs_dz = scene_dx
-            dcs_dx = -scene_dy
+            # DCS 網格航向 (Grid Bearing) — 與 DCS F10 地圖尺規一致
+            # DCS 的座標網格本身就是其地圖投影，F10 尺規直接用 atan2 計算
+            r_dx = end_dcs_dx - start_dcs_dx  # 北向差 (DCS X)
+            r_dz = end_dcs_dz - start_dcs_dz  # 東向差 (DCS Z)
+            hdg = (math.degrees(math.atan2(r_dz, r_dx)) + 360) % 360
+            dist_nm = math.hypot(r_dx, r_dz) / 1852.0
             
-            # Calculate magnetic declination approximation based on theatre
+            # 磁偏角表 (近似值，適用於各戰區)
             declinations = {
                 "Caucasus": 6.0,
                 "Syria": 5.0,
@@ -480,15 +998,9 @@ class RadarView(QGraphicsView):
                 "Sinai": 4.0,
             }
             decl = declinations.get(self.current_theatre, 6.0)
-            
-            dist_nm = math.hypot(dcs_dx, dcs_dz) / 1852.0
-            hdg = math.degrees(math.atan2(dcs_dz, dcs_dx))
-            if hdg < 0: hdg += 360
-            
             mag_hdg = (hdg - decl) % 360
-            if mag_hdg < 0: mag_hdg += 360
             
-            self.ruler_text.setPlainText(f"{int(hdg):03d}°T ({int(mag_hdg):03d}°M) / {dist_nm:.1f} NM")
+            self.ruler_text.setPlainText(f"{int(hdg):03d}° ({int(mag_hdg):03d}°M) / {dist_nm:.1f} NM")
             self.ruler_text.setPos(current_pos.x() + 15, current_pos.y() - 15)
             return
         super().mouseMoveEvent(event)
@@ -513,6 +1025,12 @@ class RadarView(QGraphicsView):
                     break
         super().mouseDoubleClickEvent(event)
         
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
+            for item in self.scene.selectedItems():
+                self.scene.removeItem(item)
+        super().keyPressEvent(event)
+
     def set_track_classification(self, name, cls):
         self.track_classifications[name] = cls
         self.update_tracks()
@@ -523,12 +1041,12 @@ class RadarView(QGraphicsView):
         return self.track_classifications.get(name, default_cls)
         
     def get_unit_type(self, target_data, is_hostile, tracks):
-        unit_type_str = target_data.get('type', 'UNKNOWN')
+        unit_type_str = target_data.get('type') or 'UNKNOWN'
         if is_hostile:
             awacs_keywords = ['E-2', 'E-3', 'A-50', 'KJ', '1L13', '55G6']
             nctr_success = False
             for f in tracks['friendlies']:
-                f_type = f.get('type', '')
+                f_type = f.get('type') or ''
                 is_awacs = any(k in f_type for k in awacs_keywords)
                 braa = calculate_braa(f, target_data)
                 
@@ -562,7 +1080,9 @@ class RadarView(QGraphicsView):
 
     def open_status_panel(self, name):
         if not hasattr(self, 'status_panel'):
-            self.status_panel = AircraftStatusPanel(self)
+            self.status_panel = AircraftStatusPanel(self.main_window.centralWidget() if hasattr(self, "main_window") else self)
+            self.status_panel.setParent(self.main_window.centralWidget() if hasattr(self, "main_window") else self)
+            self.status_panel.radar = self
             
         tracks = self.backend.get_tracks()
         target_data = None
@@ -588,7 +1108,7 @@ class RadarView(QGraphicsView):
         self.status_panel.update_data(target_data, unit_type_str, is_hostile, current_cls)
         self.status_panel.show()
         self.status_panel.raise_()
-        self.status_panel.activateWindow()
+        # self.status_panel.activateWindow()
             
     def on_selection_changed(self):
         current_selected = self.scene.selectedItems()
@@ -613,13 +1133,22 @@ class RadarView(QGraphicsView):
     def get_render_color(self, name, default_is_hostile, is_checked_in=False):
         cls = self.get_track_classification(name, default_is_hostile)
         if cls == "FRIENDLY":
-            return QColor(50, 255, 50) if is_checked_in else QColor(50, 200, 255)
+            return QColor(50, 200, 255) if is_checked_in else QColor(50, 255, 50)
         if cls == "UNKNOWN": return QColor(255, 255, 50)
         if cls in ["HOSTILE", "BANDIT"]: return QColor(255, 50, 50)
         return QColor(255, 255, 255)
 
     def update_tracks(self):
+        try:
+            self._do_update_tracks()
+        except Exception as e:
+            import traceback
+            with open("app_crash.log", "w") as f:
+                f.write(traceback.format_exc())
+
+    def _do_update_tracks(self):
         tracks = self.backend.get_tracks()
+        
         current_names = set()
         
         friendly_data = {}
@@ -631,7 +1160,7 @@ class RadarView(QGraphicsView):
             color = self.get_render_color(name, False, name in self.checked_in_tracks)
             
             prefix = 'F'
-            if any(k in f.get('type', '') for k in ['E-2', 'E-3', 'A-50', 'KJ', '1L13', '55G6']):
+            if any(k in (f.get('type') or '') for k in ['E-2', 'E-3', 'A-50', 'KJ', '1L13', '55G6']):
                 prefix = 'A'
             elif cls == "UNKNOWN": prefix = 'U'
             elif cls == "HOSTILE": prefix = 'H'
@@ -706,9 +1235,48 @@ class RadarView(QGraphicsView):
             self.osd_braa.adjustSize()
             self.osd_braa.move(20, self.viewport().height() - self.osd_braa.height() - 20)
             self.osd_braa.show()
+            
+            # 攔截碰撞計算
+            f_v = math.hypot(f['vx'], f['vz'])
+            intercept = geometry.calculate_intercept_heading(f['x'], f['z'], f_v, h['x'], h['z'], h['vx'], h['vz'])
+            if intercept:
+                cut_hdg, tti_sec, ix, iz = intercept
+                isx, isy = self.dcs_to_scene(ix, iz)
+                self.impact_point.setPos(isx, isy)
+                self.impact_point.show()
+                
+                int_info = f"INTERCEPT:\nCUT: {int(cut_hdg):03d}°\nTTI: {int(tti_sec//60):02d}:{int(tti_sec%60):02d}"
+                self.osd_intercept.setText(int_info)
+                self.osd_intercept.adjustSize()
+                self.osd_intercept.move(self.viewport().width() - self.osd_intercept.width() - 20, self.viewport().height() - self.osd_intercept.height() - 20)
+                self.osd_intercept.show()
+            else:
+                self.impact_point.hide()
+                self.osd_intercept.hide()
+                
+        elif len(valid_selected) == 1 and self.bullseye_pos:
+            target = valid_selected[0]
+            bx = -self.bullseye_pos.y()
+            bz = self.bullseye_pos.x()
+            bullseye_unit = {'x': bx, 'z': bz, 'y': 0, 'vx': 0, 'vz': 0}
+            braa = calculate_braa(bullseye_unit, target)
+            
+            info = f"BULLSEYE:\nBRG: {braa['bearing']:03d}°\nRNG: {braa['range']} NM\nALT: FL{braa['altitude']//100:03d}"
+            
+            self.osd_braa.setText(info)
+            self.osd_braa.adjustSize()
+            self.osd_braa.move(20, self.viewport().height() - self.osd_braa.height() - 20)
+            self.osd_braa.show()
+            
+            self.intercept_line.hide()
+            self.impact_point.hide()
+            self.osd_intercept.hide()
+            
         else:
             self.intercept_line.hide()
+            self.impact_point.hide()
             self.osd_braa.hide()
+            self.osd_intercept.hide()
             
         self.refresh_status_panel()
 
@@ -728,13 +1296,15 @@ class RadarView(QGraphicsView):
             pen = QPen(color)
             pen.setWidth(0) 
             
-            if is_hostile:
+            if prefix in ['H', 'B']: # Hostile/Bandit -> Diamond
                 poly = QPolygonF([
                     QPointF(0, -size), QPointF(size, 0),
                     QPointF(0, size), QPointF(-size, 0)
                 ])
                 icon = self.scene.addPolygon(poly, pen, QBrush(Qt.BrushStyle.NoBrush))
-            else:
+            elif prefix == 'U': # Unknown -> Square
+                icon = self.scene.addRect(-size, -size, size*2, size*2, pen, QBrush(Qt.BrushStyle.NoBrush))
+            else: # Friendly -> Circle
                 icon = self.scene.addEllipse(-size, -size, size*2, size*2, pen, QBrush(Qt.BrushStyle.NoBrush))
                 
             icon.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
@@ -809,11 +1379,25 @@ class RadarView(QGraphicsView):
         # 判斷是否展開字卡 (全域開啟 或 個別被點擊展開 或 處於接管狀態)
         is_expanded = self.global_labels_expanded or (name in self.expanded_labels) or (name in self.checked_in_tracks)
         
-        display_name = f"{name}"
-        if is_expanded:
-            label_html = f"{display_name}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS"
+        tn = geometry.generate_link16_tn(name)
+        player_name = data.get('player_name') or ''
+        
+        unit_type = data.get('type') or ''
+        if not unit_type or unit_type.upper() in ['UNK', 'UNKNOWN'] or prefix == 'U':
+            track_id = f"{tn}"
         else:
-            label_html = f"{display_name}"
+            track_id = f"{tn} / {unit_type}"
+        
+        if is_expanded:
+            if player_name:
+                label_html = f"{player_name}<br>{track_id}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS"
+            else:
+                label_html = f"{track_id}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS"
+        else:
+            if player_name:
+                label_html = f"{player_name}<br>{track_id}"
+            else:
+                label_html = f"{track_id}"
             
         # 繪製選取狀態
         normal_pen = QPen(color)
@@ -857,6 +1441,22 @@ def create_sidebar_icon(shape_type):
     elif shape_type == "label":
         painter.drawRect(4, 10, 24, 12)
         painter.drawLine(8, 16, 20, 16)
+    elif shape_type == "grid":
+        painter.drawRect(4, 4, 24, 24)
+        painter.drawLine(16, 4, 16, 28)
+        painter.drawLine(4, 16, 28, 16)
+    elif shape_type == "bullseye":
+        painter.drawEllipse(6, 6, 20, 20)
+        painter.drawEllipse(14, 14, 4, 4)
+    elif shape_type == "airspace":
+        painter.drawLine(4, 28, 16, 4)
+        painter.drawLine(16, 4, 28, 28)
+        painter.drawLine(28, 28, 4, 28)
+    elif shape_type == "manager":
+        painter.drawRect(4, 4, 24, 24)
+        painter.drawLine(8, 10, 24, 10)
+        painter.drawLine(8, 16, 24, 16)
+        painter.drawLine(8, 22, 24, 22)
     
     painter.end()
     return QIcon(pixmap)
@@ -873,8 +1473,11 @@ class GCIMainWindow(QMainWindow):
         
         # 雷達主畫面
         self.radar = RadarView(backend)
+        self.radar.main_window = self
         self.setWindowTitle(f"DCS External GCI (LotATC Lite) - {self.radar.current_theatre}")
         layout.addWidget(self.radar, stretch=1)
+        
+        self.statusBar().showMessage("Ready")
         
         # 控制面板 (窄邊條)
         sidebar = QVBoxLayout()
@@ -917,13 +1520,61 @@ class GCIMainWindow(QMainWindow):
         self.btn_toggle_labels.setStyleSheet(button_style)
         self.btn_toggle_labels.clicked.connect(self.radar.toggle_all_labels)
         
+        self.btn_set_bullseye = QPushButton()
+        self.btn_set_bullseye.setIcon(create_sidebar_icon("bullseye"))
+        self.btn_set_bullseye.setToolTip("自定義靶眼位置 (Bullseye)")
+        self.btn_set_bullseye.setFixedSize(45, 45)
+        self.btn_set_bullseye.setStyleSheet(button_style)
+        self.btn_set_bullseye.clicked.connect(self.toggle_set_bullseye)
+        
+        self.btn_draw_airspace = QPushButton()
+        self.btn_draw_airspace.setIcon(create_sidebar_icon("airspace"))
+        self.btn_draw_airspace.setToolTip("手繪空域 (ROZ/CAP)")
+        self.btn_draw_airspace.setFixedSize(45, 45)
+        self.btn_draw_airspace.setStyleSheet(button_style)
+        self.btn_draw_airspace.clicked.connect(self.toggle_draw_airspace)
+        
+        self.btn_manage_airspace = QPushButton()
+        self.btn_manage_airspace.setIcon(create_sidebar_icon("manager"))
+        self.btn_manage_airspace.setToolTip("管理與刪除空域")
+        self.btn_manage_airspace.setFixedSize(45, 45)
+        self.btn_manage_airspace.setStyleSheet(button_style)
+        self.btn_manage_airspace.clicked.connect(self.open_airspace_manager)
+        
         sidebar.addWidget(self.btn_mark)
         sidebar.addWidget(self.btn_toggle_airbases)
         sidebar.addWidget(self.btn_toggle_labels)
+        sidebar.addWidget(self.btn_set_bullseye)
+        sidebar.addWidget(self.btn_draw_airspace)
+        sidebar.addWidget(self.btn_manage_airspace)
         sidebar.addStretch()
         
         layout.addLayout(sidebar)
         self.setCentralWidget(main_widget)
+
+    def toggle_set_bullseye(self):
+        self.radar._is_setting_bullseye = True
+        self.radar._is_drawing_airspace = False
+        self.radar.setCursor(Qt.CursorShape.CrossCursor)
+        self.statusBar().showMessage("Click on map to set Bullseye...")
+
+    def toggle_draw_airspace(self):
+        self.radar._is_drawing_airspace = True
+        self.radar._is_setting_bullseye = False
+        self.radar._current_airspace_pts = []
+        self.radar.setCursor(Qt.CursorShape.CrossCursor)
+        self.statusBar().showMessage("Left click to add points, Right click to finish airspace.")
+
+    def open_airspace_manager(self):
+        if not hasattr(self, "manager_panel") or not self.manager_panel:
+            self.manager_panel = AirspaceManagerPanel(self.radar, self.centralWidget())
+        else:
+            self.manager_panel.list_widget.clear()
+            self.manager_panel.list_widget.addItems(self.radar.airspaces.keys())
+        self.manager_panel.show()
+        self.manager_panel.raise_()
+        self.manager_panel.move(50, 50)
+        # dialog.exec()
 
 def create_gci_cursor():
     cursor_size = 20

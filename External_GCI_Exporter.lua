@@ -1,7 +1,7 @@
 env.info("External GCI Exporter Loading...")
 
 local UDP_IP = "127.0.0.1"
-local UDP_PORT = 10082
+local UDP_PORT = 10088
 local UPDATE_INTERVAL = 4.0 -- 4s (Link 16 / AESA update rate)
 
 -- Setup UDP Socket
@@ -23,12 +23,14 @@ local function getUnitData(unit, is_friendly)
         heading = math.atan2(vel.z, vel.x)
     end
 
-    local unitName = unit:getPlayerName() or unit:getName()
+    local playerName = unit:getPlayerName()
+    local unitName = unit:getName()
     
     local lat, lon, alt = coord.LOtoLL(pos)
 
     return {
         unit_name = unitName,
+        player_name = playerName or "",
         group_name = unit:getGroup():getName(),
         type = unit:getTypeName(),
         x = pos.x,
@@ -47,7 +49,7 @@ end
 -- 簡易的 JSON Encoder
 local function encode_json(val)
     local t = type(val)
-    if t == "number" then return tostring(val)
+    if t == "number" then return string.gsub(tostring(val), ",", ".")
     elseif t == "boolean" then return tostring(val)
     elseif t == "string" then return string.format("%q", val)
     elseif t == "table" then
@@ -99,38 +101,41 @@ local function export_telemetry_safe(time, args)
     }
     
     local knownHostiles = {}
-    local blueGroups = coalition.getGroups(coalition.side.BLUE)
     
-    if blueGroups then
-        for _, group in pairs(blueGroups) do
-            if group and group:isExist() then
-                -- 1. 抓取所有藍軍單位的位置
-                local units = group:getUnits()
-                if units then
-                    for _, unit in pairs(units) do
-                        if unit and unit:isExist() then
-                            local data = getUnitData(unit, true)
-                            if data then
-                                table.insert(telemetry.friendlies, data)
+    local categories = {Group.Category.AIRPLANE, Group.Category.HELICOPTER}
+    for _, cat in ipairs(categories) do
+        local blueGroups = coalition.getGroups(coalition.side.BLUE, cat)
+        if blueGroups then
+            for _, group in pairs(blueGroups) do
+                if group and group:isExist() then
+                    -- 1. 抓取所有藍軍單位的位置
+                    local units = group:getUnits()
+                    if units then
+                        for _, unit in pairs(units) do
+                            if unit and unit:isExist() then
+                                local data = getUnitData(unit, true)
+                                if data then
+                                    table.insert(telemetry.friendlies, data)
+                                end
                             end
                         end
                     end
-                end
-                
-                -- 2. 讓藍軍雷達網抓取紅軍單位
-                local controller = group:getController()
-                if controller then
-                    local targets = controller:getDetectedTargets()
-                    if targets then
-                        for _, targetData in pairs(targets) do
-                            local enemyUnit = targetData.object
-                            if enemyUnit and enemyUnit:isExist() and enemyUnit.getCoalition and enemyUnit:getCoalition() == coalition.side.RED then
-                                local uid = enemyUnit:getName()
-                                if not knownHostiles[uid] then
-                                    knownHostiles[uid] = true
-                                    local data = getUnitData(enemyUnit, false)
-                                    if data then
-                                        table.insert(telemetry.hostiles, data)
+                    
+                    -- 2. 讓藍軍雷達網抓取紅軍單位
+                    local controller = group:getController()
+                    if controller then
+                        local targets = controller:getDetectedTargets()
+                        if targets then
+                            for _, targetData in pairs(targets) do
+                                local enemyUnit = targetData.object
+                                if enemyUnit and enemyUnit:isExist() and enemyUnit.getCoalition and enemyUnit:getCoalition() == coalition.side.RED then
+                                    local uid = enemyUnit:getName()
+                                    if not knownHostiles[uid] then
+                                        knownHostiles[uid] = true
+                                        local data = getUnitData(enemyUnit, false)
+                                        if data then
+                                            table.insert(telemetry.hostiles, data)
+                                        end
                                     end
                                 end
                             end

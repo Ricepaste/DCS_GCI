@@ -76,7 +76,7 @@ Scene_Y = -X 軸 (DCS North -> Screen Up)
 
 ### Backend 模組 (`backend.py`)
 ```python
-backend = GCIBackend(host='0.0.0.0', port=10082)
+backend = GCIBackend(host='0.0.0.0', port=10088)
 backend.start()
 backend.get_tracks() -> dict  # 回傳 {'friendlies': [], 'hostiles': []}
 backend.stop()

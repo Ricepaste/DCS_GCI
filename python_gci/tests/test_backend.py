@@ -87,3 +87,54 @@ def test_track_history_limit():
     # The oldest items (0..4) should be popped, so the first remaining item is from i=4 (since current i=14 is appended AFTER)
     assert friendly["history"][0] == (40, 40) 
     assert friendly["history"][-1] == (130, 130)
+
+def test_backend_none_types():
+    """Test that the backend correctly handles None types in telemetry data."""
+    backend = GCIBackend(port=0, stagger_updates=False)
+    
+    # DCS can export None (null in JSON) for types or names
+    malicious_payload = json.dumps({
+        "friendlies": [
+            {
+                "unit_name": "Ghost",
+                "player_name": None,
+                "type": None,
+                "x": 100, "z": 200, "y": 300,
+                "vx": 50, "vz": 50, "vy": 0
+            }
+        ],
+        "hostiles": [],
+        "airbases": []
+    })
+    
+    backend.parse_telemetry(malicious_payload)
+    tracks = backend.get_tracks()
+    
+    assert len(tracks["friendlies"]) == 1
+    friendly = tracks["friendlies"][0]
+    assert friendly["unit_name"] == "Ghost"
+    assert friendly["player_name"] is None
+    assert friendly["type"] is None
+
+def test_backend_starvation_prevention():
+    """Test that rapid telemetry updates don't push apply_time indefinitely."""
+    import time
+    backend = GCIBackend(port=0, stagger_updates=True)
+    
+    payload1 = json.dumps({
+        "friendlies": [
+            {"unit_name": "T1", "x": 0, "z": 0, "y": 0, "vx": 0, "vz": 0}
+        ]
+    })
+    
+    backend.parse_telemetry(payload1)
+    
+    assert "T1" in backend.pending_updates
+    initial_apply_time, _, _ = backend.pending_updates["T1"]
+    
+    # Simulate rapid update arriving right after
+    time.sleep(0.01)
+    backend.parse_telemetry(payload1)
+    
+    new_apply_time, _, _ = backend.pending_updates["T1"]
+    assert initial_apply_time == new_apply_time, "apply_time was incorrectly overwritten!"

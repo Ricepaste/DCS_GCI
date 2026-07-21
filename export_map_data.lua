@@ -23,7 +23,11 @@ local function export_map_data()
             course_deg = math.floor(math.deg(runways[1].course))
         end
         
-        env.info(string.format("AIRBASE_PT:%s,%d,%d,%d", airbase:getName(), p.x, p.z, course_deg))
+        local lat, lon, alt = coord.LOtoLL(p)
+        local lat_str = string.gsub(tostring(lat), ",", ".")
+        local lon_str = string.gsub(tostring(lon), ",", ".")
+        
+        env.info(string.format("AIRBASE_PT:%s,%d,%d,%d,%s,%s", airbase:getName(), p.x, p.z, course_deg, lat_str, lon_str))
         
         if p.x < min_x then min_x = p.x end
         if p.x > max_x then max_x = p.x end
