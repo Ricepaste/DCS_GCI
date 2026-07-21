@@ -905,6 +905,11 @@ class RadarView(QGraphicsView):
             self.ruler_text.setPos(self._ruler_start)
             self.ruler_text.show()
             return
+
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_panning = True
+            self._pan_start = event.position().toPoint()
+            return
             
         item = self.itemAt(event.position().toPoint())
         if item:
@@ -916,11 +921,7 @@ class RadarView(QGraphicsView):
                         else:
                             self.expanded_labels.add(name)
                         break
-        else:
-            if event.button() == Qt.MouseButton.LeftButton:
-                self._is_panning = True
-                self._pan_start = event.position().toPoint()
-                return
+            
         super().mousePressEvent(event)
         
     def mouseMoveEvent(self, event):
