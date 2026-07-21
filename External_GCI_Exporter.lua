@@ -2,7 +2,7 @@ env.info("External GCI Exporter Loading...")
 
 local UDP_IP = "127.0.0.1"
 local UDP_PORT = 10082
-local UPDATE_INTERVAL = 0.1 -- 10Hz
+local UPDATE_INTERVAL = 4.0 -- 4s (Link 16 / AESA update rate)
 
 -- Setup UDP Socket
 package.path  = package.path..";.\\LuaSocket\\?.lua"
@@ -24,6 +24,8 @@ local function getUnitData(unit, is_friendly)
     end
 
     local unitName = unit:getPlayerName() or unit:getName()
+    
+    local lat, lon, alt = coord.LOtoLL(pos)
 
     return {
         unit_name = unitName,
@@ -32,6 +34,8 @@ local function getUnitData(unit, is_friendly)
         x = pos.x,
         y = pos.y, -- altitude in DCS
         z = pos.z,
+        lat = lat,
+        lon = lon,
         vx = vel.x,
         vy = vel.y,
         vz = vel.z,
@@ -71,10 +75,27 @@ local function encode_json(val)
     return "null"
 end
 
+local function get_airbases()
+    local airbases_data = {}
+    for _, airbase in pairs(world.getAirbases()) do
+        local p = airbase:getPoint()
+        local lat, lon = coord.LOtoLL(p)
+        table.insert(airbases_data, {
+            name = airbase:getName(),
+            x = p.x,
+            z = p.z,
+            lat = lat,
+            lon = lon
+        })
+    end
+    return airbases_data
+end
+
 local function export_telemetry_safe(time, args)
     local telemetry = {
         friendlies = {},
-        hostiles = {}
+        hostiles = {},
+        airbases = get_airbases()
     }
     
     local knownHostiles = {}
