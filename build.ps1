@@ -15,7 +15,12 @@ if (Test-Path "app.spec") { Remove-Item "app.spec" -Force }
 
 # Run PyInstaller (--onedir avoids Windows Defender false positive malware flags)
 Write-Host "Packaging python_gci into GCI_Client directory..."
-pyinstaller --windowed --onedir --name GCI_Client app.py
+pyinstaller --windowed --onedir --name GCI_Client --add-data "map_data;map_data" app.py
+
+# Ensure map_data is copied into dist\GCI_Client
+if (Test-Path "map_data") {
+    Copy-Item -Path "map_data" -Destination "dist\GCI_Client\map_data" -Recurse -Force
+}
 
 # Compress output folder to ZIP
 Write-Host "Compressing to GCI_Client.zip..."

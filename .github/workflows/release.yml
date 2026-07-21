@@ -34,7 +34,8 @@ jobs:
       - name: Build Executable with PyInstaller
         run: |
           cd python_gci
-          pyinstaller --windowed --onedir --name GCI_Client app.py
+          pyinstaller --windowed --onedir --name GCI_Client --add-data "map_data;map_data" app.py
+          powershell Copy-Item -Path "map_data" -Destination "dist/GCI_Client/map_data" -Recurse -Force
           powershell Compress-Archive -Path "dist/GCI_Client/*" -DestinationPath "dist/GCI_Client.zip" -Force
 
       - name: Upload Release Asset

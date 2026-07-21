@@ -8,6 +8,17 @@ from backend import GCIBackend
 from geometry import calculate_braa, calculate_speed, to_dms, sync_ordered_selection
 import geometry
 
+def get_base_dir():
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        if os.path.exists(os.path.join(exe_dir, "map_data")):
+            return exe_dir
+        if hasattr(sys, '_MEIPASS') and os.path.exists(os.path.join(sys._MEIPASS, "map_data")):
+            return sys._MEIPASS
+        return exe_dir
+    else:
+        return os.path.dirname(os.path.abspath(__file__))
+
 class AircraftStatusPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -631,7 +642,7 @@ class RadarView(QGraphicsView):
         self.threat_text_items = {}
         
         # 決定當前要讀取的地圖資料目錄
-        base_dir = os.path.dirname(__file__)
+        base_dir = get_base_dir()
         current_map_path = os.path.join(base_dir, "map_data", "current_map.txt")
         self.current_theatre = "Caucasus"
         if os.path.exists(current_map_path):
