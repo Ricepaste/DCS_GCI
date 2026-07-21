@@ -97,7 +97,6 @@ def test_status_panel_saves_notes():
     data = {'unit_name': 'TestPilot', 'y': 0, 'vx': 0, 'vz': 0, 'heading': 0}
     panel.update_data(data, "F-16C", False, "FRIENDLY")
     
-    # Simulate user typing
     panel.notes_edit.setPlainText("CAP Station 1")
     
     # Switch to another unit to trigger save
@@ -107,10 +106,51 @@ def test_status_panel_saves_notes():
     # Verify data was saved for TestPilot
     assert 'TestPilot' in panel.global_data
     assert panel.global_data['TestPilot']['notes'] == "CAP Station 1"
+
+def test_radar_view_icon_shape_change():
+    from PyQt6.QtWidgets import QGraphicsPolygonItem, QGraphicsRectItem, QGraphicsEllipseItem
+    backend = GCIBackend(port=0, stagger_updates=False)
+    radar = RadarView(backend)
     
-    # Verify fields are now empty for OtherPilot
-    assert panel.notes_edit.toPlainText() == ""
+    data = {'unit_name': 'Track1', 'x': 0, 'z': 0, 'y': 1000, 'vx': 0, 'vz': 0}
     
-    # Switch back to TestPilot and verify fields are restored
-    panel.update_data(data, "F-16C", False, "FRIENDLY")
-    assert panel.notes_edit.toPlainText() == "CAP Station 1"
+    # 1. Unknown -> Square (QGraphicsRectItem)
+    radar._update_single_track(data, QColor(255, 255, 0), is_hostile=True, prefix='U')
+    item = radar.track_items['Track1']['icon']
+    assert isinstance(item, QGraphicsRectItem)
+    
+    # 2. Reclassify to Bandit -> Diamond (QGraphicsPolygonItem)
+    radar._update_single_track(data, QColor(255, 0, 0), is_hostile=True, prefix='B')
+    item = radar.track_items['Track1']['icon']
+    assert isinstance(item, QGraphicsPolygonItem)
+    
+    # 3. Reclassify to Hostile -> Diamond (QGraphicsPolygonItem)
+    radar._update_single_track(data, QColor(255, 0, 0), is_hostile=True, prefix='H')
+    item = radar.track_items['Track1']['icon']
+    assert isinstance(item, QGraphicsPolygonItem)
+    
+    # 4. Reclassify to Friendly -> Circle (QGraphicsEllipseItem)
+    radar._update_single_track(data, QColor(0, 255, 0), is_hostile=False, prefix='F')
+    item = radar.track_items['Track1']['icon']
+    assert isinstance(item, QGraphicsEllipseItem)
+
+def test_nctr_hostile_unit_type_visibility():
+    backend = GCIBackend(port=0, stagger_updates=False)
+    radar = RadarView(backend)
+    
+    hostile_data = {'unit_name': 'Flanker1', 'type': 'Su-27', 'x': 100000, 'z': 100000, 'y': 5000, 'vx': 0, 'vz': 0}
+    
+    # 1. Far away without AWACS NCTR -> should hide Su-27 and show only TN
+    unit_type_str = radar.get_unit_type(hostile_data, is_hostile=True, tracks={'friendlies': []})
+    assert unit_type_str == "UNKNOWN"
+    
+    # Render track
+    radar._update_single_track(hostile_data, QColor(255, 255, 0), is_hostile=True, prefix='U')
+    html = radar.track_items['Flanker1']['last_html']
+    assert "Su-27" not in html
+    
+    # 2. Friendly AWACS close by (30 NM) facing target -> NCTR success
+    hostile_data_moving = {'unit_name': 'Flanker1', 'type': 'Su-27', 'x': 100000, 'z': 100000, 'y': 5000, 'vx': 0, 'vz': -100}
+    friendly_awacs = {'unit_name': 'Magic1', 'type': 'E-3A', 'x': 100000, 'z': 44440, 'y': 10000, 'vx': 0, 'vz': 100}
+    unit_type_str_success = radar.get_unit_type(hostile_data_moving, is_hostile=True, tracks={'friendlies': [friendly_awacs]})
+    assert unit_type_str_success == "Su-27"

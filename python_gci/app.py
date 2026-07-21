@@ -1,6 +1,20 @@
 import sys
 import os
 import math
+import traceback
+
+def log_global_exception(exc_type, exc_value, exc_tb):
+    try:
+        base_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(__file__)
+        log_path = os.path.join(base_dir, "app_crash.log")
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"\n--- UNHANDLED CRASH [{os.path.basename(sys.executable)}] ---\n")
+            traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+    except Exception:
+        pass
+
+sys.excepthook = log_global_exception
+
 from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QDialog, QFormLayout, QTextEdit, QButtonGroup, QLineEdit, QInputDialog, QListWidget, QMessageBox, QGraphicsTextItem, QTabWidget, QDialogButtonBox
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap, QImage, QTransform, QCursor, QIcon
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, QLineF
@@ -1364,6 +1378,27 @@ class RadarView(QGraphicsView):
             
         self.refresh_status_panel()
 
+    def _create_icon_for_prefix(self, prefix, color):
+        size = 6
+        pen = QPen(color)
+        pen.setWidth(0) 
+        
+        if prefix in ['H', 'B']: # Hostile/Bandit -> Diamond
+            poly = QPolygonF([
+                QPointF(0, -size), QPointF(size, 0),
+                QPointF(0, size), QPointF(-size, 0)
+            ])
+            icon = self.scene.addPolygon(poly, pen, QBrush(Qt.BrushStyle.NoBrush))
+        elif prefix == 'U': # Unknown -> Square
+            icon = self.scene.addRect(-size, -size, size*2, size*2, pen, QBrush(Qt.BrushStyle.NoBrush))
+        else: # Friendly -> Circle
+            icon = self.scene.addEllipse(-size, -size, size*2, size*2, pen, QBrush(Qt.BrushStyle.NoBrush))
+            
+        icon.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        icon.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable) # 允許選取
+        icon.setZValue(10)
+        return icon
+
     def _update_single_track(self, data, color, is_hostile, prefix='U'):
         name = data['unit_name']
         is_ground = data.get('category') in [2, 3]
@@ -1378,24 +1413,9 @@ class RadarView(QGraphicsView):
         alt_kft = int((data['y'] * 3.28084) / 1000)
         
         if name not in self.track_items:
-            size = 6
             pen = QPen(color)
-            pen.setWidth(0) 
-            
-            if prefix in ['H', 'B']: # Hostile/Bandit -> Diamond
-                poly = QPolygonF([
-                    QPointF(0, -size), QPointF(size, 0),
-                    QPointF(0, size), QPointF(-size, 0)
-                ])
-                icon = self.scene.addPolygon(poly, pen, QBrush(Qt.BrushStyle.NoBrush))
-            elif prefix == 'U': # Unknown -> Square
-                icon = self.scene.addRect(-size, -size, size*2, size*2, pen, QBrush(Qt.BrushStyle.NoBrush))
-            else: # Friendly -> Circle
-                icon = self.scene.addEllipse(-size, -size, size*2, size*2, pen, QBrush(Qt.BrushStyle.NoBrush))
-                
-            icon.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
-            icon.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable) # 允許選取
-            icon.setZValue(10)
+            pen.setWidth(0)
+            icon = self._create_icon_for_prefix(prefix, color)
             
             line = self.scene.addLine(0, 0, 0, 0, pen)
             line.setZValue(5)
@@ -1549,14 +1569,25 @@ class RadarView(QGraphicsView):
             dot_color.setAlpha(int(alpha))
             dot.setBrush(QBrush(dot_color))
             
-        # 動態更新文字與連線顏色 (可能因為右鍵報到而改變)
+        # 動態更新文字與連線顏色 (可能因為右鍵報到或 ROE 宣告而改變)
         items['text'].setDefaultTextColor(color)
-        
         if 'class_text' in items:
             items['class_text'].setDefaultTextColor(color)
-            if items.get('last_prefix') != prefix:
+        
+        if items.get('last_prefix') != prefix:
+            if 'class_text' in items:
                 items['class_text'].setPlainText(prefix)
-                items['last_prefix'] = prefix
+            # 重新建立對應形狀的圖示 (Hostile/Bandit -> 菱形, Unknown -> 正方形, Friendly -> 圓形)
+            was_selected = items['icon'].isSelected() if 'icon' in items else False
+            if 'icon' in items and items['icon']:
+                self.scene.removeItem(items['icon'])
+            items['icon'] = self._create_icon_for_prefix(prefix, color)
+            items['icon'].setPos(sx, sy)
+            if was_selected:
+                items['icon'].setSelected(True)
+            items['last_prefix'] = prefix
+            
+        if 'class_text' in items:
             items['class_text'].setPos(sx, sy)
             items['class_text'].setTransform(QTransform().translate(-4, -18))
         
@@ -1566,15 +1597,16 @@ class RadarView(QGraphicsView):
         tn = geometry.generate_link16_tn(name)
         player_name = data.get('player_name') or ''
         
-        unit_type = data.get('type') or ''
-        if not unit_type :
-            track_id = f"{tn}"
-        elif not is_hostile:
-            track_id = f"{tn} / {unit_type}"
+        if not is_hostile:
+            unit_type = data.get('type') or ''
+            track_id = f"{tn} / {unit_type}" if unit_type else f"{tn}"
         else:
             tracks = self.backend.get_tracks()
             unit_type_str = self.get_unit_type(data, is_hostile, tracks)
-            track_id = f"{tn} / {unit_type_str}"
+            if unit_type_str and unit_type_str != "UNKNOWN":
+                track_id = f"{tn} / {unit_type_str}"
+            else:
+                track_id = f"{tn}"
         
         if is_expanded:
             if player_name:
@@ -1847,32 +1879,36 @@ class NetworkDialog(QDialog):
         self.ip_input.setText("0.0.0.0 (Local Server)")
 
 def run_app():
-    app = QApplication(sys.argv)
-    app.setOverrideCursor(create_gci_cursor())
-    
-    dialog = NetworkDialog()
-    if dialog.exec() != QDialog.DialogCode.Accepted:
-        sys.exit(0)
+    try:
+        app = QApplication(sys.argv)
+        app.setOverrideCursor(create_gci_cursor())
         
-    mode = dialog.mode
-    port = int(dialog.port_input.text())
-    
-    if mode == "host":
-        from backend import GCIServer
-        server = GCIServer(tcp_host="0.0.0.0", tcp_port=port, udp_port=port)
-        server.start()
-        # Connect client to localhost
-        backend = GCIBackend(host="127.0.0.1", port=port)
-    else:
-        ip = dialog.ip_input.text()
-        backend = GCIBackend(host=ip, port=port)
+        dialog = NetworkDialog()
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            sys.exit(0)
+            
+        mode = dialog.mode
+        port = int(dialog.port_input.text())
         
-    backend.start()
-    
-    window = GCIMainWindow(backend)
-    window.show()
-    
-    sys.exit(app.exec())
+        if mode == "host":
+            from backend import GCIServer
+            server = GCIServer(tcp_host="0.0.0.0", tcp_port=port, udp_port=port)
+            server.start()
+            # Connect client to localhost
+            backend = GCIBackend(host="127.0.0.1", port=port)
+        else:
+            ip = dialog.ip_input.text()
+            backend = GCIBackend(host=ip, port=port)
+            
+        backend.start()
+        
+        window = GCIMainWindow(backend)
+        window.show()
+        
+        sys.exit(app.exec())
+    except Exception as e:
+        log_global_exception(*sys.exc_info())
+        raise e
 
 if __name__ == "__main__":
     run_app()

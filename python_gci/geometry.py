@@ -133,7 +133,7 @@ def latlon_to_mgrs(lat, lon):
         import mgrs
         m = mgrs.MGRS()
         return m.toMGRS(lat, lon)
-    except ImportError:
+    except Exception:
         return "MGRS_NA"
 
 # DCS 各戰區的投影中央經線 (Central Meridian)
