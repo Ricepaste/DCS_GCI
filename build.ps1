@@ -13,11 +13,13 @@ if (Test-Path "build") { Remove-Item "build" -Recurse -Force }
 if (Test-Path "dist") { Remove-Item "dist" -Recurse -Force }
 if (Test-Path "app.spec") { Remove-Item "app.spec" -Force }
 
-# Run PyInstaller
-Write-Host "Packaging python_gci into GCI_Client.exe..."
-# --windowed: Do not show console window
-# --onefile: Package into a single .exe
-# --name: Output executable name
-pyinstaller --windowed --onefile --name GCI_Client app.py
+# Run PyInstaller (--onedir avoids Windows Defender false positive malware flags)
+Write-Host "Packaging python_gci into GCI_Client directory..."
+pyinstaller --windowed --onedir --name GCI_Client app.py
 
-Write-Host "Packaging complete! Executable is located at: $(Resolve-Path .\dist\GCI_Client.exe)"
+# Compress output folder to ZIP
+Write-Host "Compressing to GCI_Client.zip..."
+if (Test-Path "dist\GCI_Client.zip") { Remove-Item "dist\GCI_Client.zip" -Force }
+Compress-Archive -Path "dist\GCI_Client\*" -DestinationPath "dist\GCI_Client.zip" -Force
+
+Write-Host "Packaging complete! Zip package is located at: $(Resolve-Path .\dist\GCI_Client.zip)"
