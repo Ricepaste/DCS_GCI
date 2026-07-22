@@ -148,9 +148,17 @@ def test_nctr_hostile_unit_type_visibility():
     radar._update_single_track(hostile_data, QColor(255, 255, 0), is_hostile=True, prefix='U')
     html = radar.track_items['Flanker1']['last_html']
     assert "Su-27" not in html
-    
+
     # 2. Friendly AWACS close by (30 NM) facing target -> NCTR success
     hostile_data_moving = {'unit_name': 'Flanker1', 'type': 'Su-27', 'x': 100000, 'z': 100000, 'y': 5000, 'vx': 0, 'vz': -100}
     friendly_awacs = {'unit_name': 'Magic1', 'type': 'E-3A', 'x': 100000, 'z': 44440, 'y': 10000, 'vx': 0, 'vz': 100}
     unit_type_str_success = radar.get_unit_type(hostile_data_moving, is_hostile=True, tracks={'friendlies': [friendly_awacs]})
     assert unit_type_str_success == "Su-27"
+
+def test_status_panel_update_data_without_heading():
+    from app import AircraftStatusPanel
+    panel = AircraftStatusPanel()
+    data = {'unit_name': 'NoHdgPilot', 'y': 1000, 'vx': 10, 'vz': 10}
+    # Should not raise KeyError: 'heading'
+    panel.update_data(data, "Su-27", True, "HOSTILE")
+    assert panel.lbl_hdg.text() == "045°"

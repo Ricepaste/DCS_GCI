@@ -234,16 +234,17 @@ class AircraftStatusPanel(QWidget):
         self._is_dragging = False
 
     def on_class_changed(self, button):
-        if self.current_unit and self.parent():
+        if self.current_unit:
             cls_str = button.text()
             cls = "FRIENDLY"
             if cls_str == "UNK": cls = "UNKNOWN"
             elif cls_str == "HST": cls = "HOSTILE"
             elif cls_str == "BND": cls = "BANDIT"
+            elif cls_str == "FND": cls = "FRIENDLY"
             
             if hasattr(self, 'radar') and self.radar:
                 self.radar.set_track_classification(self.current_unit, cls)
-            elif hasattr(self.parent(), 'set_track_classification'):
+            elif self.parent() and hasattr(self.parent(), 'set_track_classification'):
                 self.parent().set_track_classification(self.current_unit, cls)
             self.refresh_ui_colors(cls)
             
@@ -294,14 +295,21 @@ class AircraftStatusPanel(QWidget):
             
         self.lbl_type.setText(unit_type_str)
         
-        alt_kft = int((data['y'] * 3.28084) / 1000)
+        alt_kft = int((data.get('y', 0) * 3.28084) / 1000)
         self.lbl_alt.setText(f"FL{alt_kft * 10:03d}")
         
-        speed_kts = calculate_speed(data['vx'], data['vz'])
+        speed_kts = calculate_speed(data.get('vx', 0), data.get('vz', 0))
         self.lbl_spd.setText(f"{speed_kts} GS")
         
-        hdg_deg = int(math.degrees(data['heading']))
-        if hdg_deg < 0: hdg_deg += 360
+        heading_rad = data.get('heading')
+        if heading_rad is None:
+            vx = data.get('vx', 0)
+            vz = data.get('vz', 0)
+            if vx != 0 or vz != 0:
+                heading_rad = math.atan2(vz, vx)
+            else:
+                heading_rad = 0
+        hdg_deg = int(math.degrees(heading_rad)) % 360
         self.lbl_hdg.setText(f"{hdg_deg:03d}°")
         
         # Datalink Updates
@@ -1012,17 +1020,23 @@ class RadarView(QGraphicsView):
 
             
         if event.button() == Qt.MouseButton.LeftButton:
-            item = self.itemAt(event.position().toPoint())
+            pos = event.position().toPoint()
+            clicked_items = self.items(pos)
             is_track_click = False
-            if item:
-                for name, items in self.track_items.items():
-                    if item == items['icon'] or item == items['text'] or item == items.get('class_text'):
+            for name, items in self.track_items.items():
+                icon = items.get('icon')
+                text = items.get('text')
+                class_text = items.get('class_text')
+                for item in clicked_items:
+                    if item in (icon, text, class_text) or (item and item.parentItem() in (icon, text, class_text)):
                         if name in self.expanded_labels:
                             self.expanded_labels.remove(name)
                         else:
                             self.expanded_labels.add(name)
                         is_track_click = True
                         break
+                if is_track_click:
+                    break
             if not is_track_click:
                 self._is_panning = True
                 self._pan_start = event.position().toPoint()
@@ -1080,20 +1094,16 @@ class RadarView(QGraphicsView):
         elif getattr(self, '_is_ruler', False):
             self.ruler_line.setLine(self._ruler_start.x(), self._ruler_start.y(), current_pos.x(), current_pos.y())
             
-            # 起點與終點的 DCS 座標 (DCS X=北, Z=東, 單位=公尺)
             start_dcs_dz = self._ruler_start.x()
             start_dcs_dx = -self._ruler_start.y()
             end_dcs_dz = current_pos.x()
             end_dcs_dx = -current_pos.y()
             
-            # DCS 網格航向 (Grid Bearing) — 與 DCS F10 地圖尺規一致
-            # DCS 的座標網格本身就是其地圖投影，F10 尺規直接用 atan2 計算
-            r_dx = end_dcs_dx - start_dcs_dx  # 北向差 (DCS X)
-            r_dz = end_dcs_dz - start_dcs_dz  # 東向差 (DCS Z)
+            r_dx = end_dcs_dx - start_dcs_dx
+            r_dz = end_dcs_dz - start_dcs_dz
             hdg = (math.degrees(math.atan2(r_dz, r_dx)) + 360) % 360
             dist_nm = math.hypot(r_dx, r_dz) / 1852.0
             
-            # 磁偏角表 (近似值，適用於各戰區)
             declinations = {
                 "Caucasus": 6.0,
                 "Syria": 5.0,
@@ -1124,19 +1134,98 @@ class RadarView(QGraphicsView):
         super().mouseReleaseEvent(event)
         
     def mouseDoubleClickEvent(self, event):
-        item = self.itemAt(event.position().toPoint())
-        if item:
-            for name, items in self.track_items.items():
-                if item == items['icon'] or item == items['text'] or item == items.get('class_text'):
-                    self.open_status_panel(name)
+        pos = event.position().toPoint()
+        clicked_items = self.items(pos)
+        found_name = None
+        for name, items in self.track_items.items():
+            icon = items.get('icon')
+            text = items.get('text')
+            class_text = items.get('class_text')
+            for item in clicked_items:
+                if item in (icon, text, class_text) or (item and item.parentItem() in (icon, text, class_text)):
+                    found_name = name
                     break
+            if found_name:
+                break
+        if found_name:
+            self.open_status_panel(found_name)
         super().mouseDoubleClickEvent(event)
         
+    def contextMenuEvent(self, event):
+        pos = event.pos()
+        clicked_items = self.items(pos)
+        target_name = None
+        for name, items in self.track_items.items():
+            icon = items.get('icon')
+            text = items.get('text')
+            class_text = items.get('class_text')
+            for item in clicked_items:
+                if item in (icon, text, class_text) or (item and item.parentItem() in (icon, text, class_text)):
+                    target_name = name
+                    break
+            if target_name:
+                break
+                
+        if target_name:
+            from PyQt6.QtWidgets import QMenu
+            menu = QMenu(self)
+            menu.setStyleSheet("""
+                QMenu { background-color: #1a2b26; color: #e0e0e0; border: 1px solid #336666; font-family: Consolas; font-weight: bold; }
+                QMenu::item:selected { background-color: #2a453d; color: #55ff55; }
+            """)
+            
+            act_fnd = menu.addAction("[F] Declare FRIENDLY")
+            act_unk = menu.addAction("[U] Declare UNKNOWN")
+            act_bnd = menu.addAction("[B] Declare BANDIT")
+            act_hst = menu.addAction("[H] Declare HOSTILE")
+            menu.addSeparator()
+            
+            is_checked = target_name in self.checked_in_tracks
+            act_check = menu.addAction("Check Out (Unmark)" if is_checked else "Check In (Mark)")
+            
+            action = menu.exec(event.globalPos())
+            if action == act_fnd:
+                self.set_track_classification(target_name, "FRIENDLY")
+            elif action == act_unk:
+                self.set_track_classification(target_name, "UNKNOWN")
+            elif action == act_bnd:
+                self.set_track_classification(target_name, "BANDIT")
+            elif action == act_hst:
+                self.set_track_classification(target_name, "HOSTILE")
+            elif action == act_check:
+                if is_checked:
+                    self.checked_in_tracks.remove(target_name)
+                else:
+                    self.checked_in_tracks.add(target_name)
+                self.update_tracks()
+                
+            if hasattr(self, 'status_panel') and self.status_panel.isVisible():
+                self.refresh_status_panel()
+        else:
+            super().contextMenuEvent(event)
+
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
+        key = event.key()
+        if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             for item in self.scene.selectedItems():
                 self.scene.removeItem(item)
-        super().keyPressEvent(event)
+        elif key in (Qt.Key.Key_F, Qt.Key.Key_U, Qt.Key.Key_B, Qt.Key.Key_H):
+            cls_map = {
+                Qt.Key.Key_F: "FRIENDLY",
+                Qt.Key.Key_U: "UNKNOWN",
+                Qt.Key.Key_B: "BANDIT",
+                Qt.Key.Key_H: "HOSTILE"
+            }
+            target_cls = cls_map[key]
+            # 對當前選取的航機批量更新 ROE
+            for name in self.ordered_selection:
+                self.set_track_classification(name, target_cls)
+            if hasattr(self, 'status_panel') and self.status_panel.isVisible():
+                self.refresh_status_panel()
+        elif key == Qt.Key.Key_T:
+            self.toggle_threat_rings()
+        else:
+            super().keyPressEvent(event)
 
     def set_track_classification(self, name, cls):
         self.track_classifications[name] = cls
@@ -1186,9 +1275,10 @@ class RadarView(QGraphicsView):
                 self.status_panel.update_data(target_data, unit_type_str, is_hostile, current_cls)
 
     def open_status_panel(self, name):
-        if not hasattr(self, 'status_panel'):
-            self.status_panel = AircraftStatusPanel(self.main_window.centralWidget() if hasattr(self, "main_window") else self)
-            self.status_panel.setParent(self.main_window.centralWidget() if hasattr(self, "main_window") else self)
+        parent_widget = self.main_window.centralWidget() if hasattr(self, "main_window") else self
+        if not hasattr(self, 'status_panel') or not self.status_panel:
+            self.status_panel = AircraftStatusPanel(parent_widget)
+            self.status_panel.setParent(parent_widget)
             self.status_panel.radar = self
             
         tracks = self.backend.get_tracks()
@@ -1213,9 +1303,13 @@ class RadarView(QGraphicsView):
         unit_type_str = self.get_unit_type(target_data, is_hostile, tracks)
         current_cls = self.get_track_classification(target_data['unit_name'], is_hostile)
         self.status_panel.update_data(target_data, unit_type_str, is_hostile, current_cls)
+        
+        if not self.status_panel.isVisible():
+            pw = parent_widget.width()
+            sw = self.status_panel.width()
+            self.status_panel.move(max(10, pw - sw - 20), 20)
         self.status_panel.show()
         self.status_panel.raise_()
-        # self.status_panel.activateWindow()
             
     def on_selection_changed(self):
         current_selected = self.scene.selectedItems()
@@ -1522,7 +1616,7 @@ class RadarView(QGraphicsView):
         if 'jam_lines' not in items:
             items['jam_lines'] = []
             
-        if is_jammed or is_ground:
+        if is_ground:
             items['icon'].hide()
             items['line'].hide()
             items['text'].hide()
@@ -1530,40 +1624,35 @@ class RadarView(QGraphicsView):
                 items['class_text'].hide()
             for dot in items.get('history_dots', []):
                 dot.hide()
-            
-            # 針對 ECM 開啟的干擾目標，畫出從預警機出發的干擾射線
-            if is_jammed and not is_ground:
-                jammed_by = data.get('jammed_by', [])
-                # 確保線條數量
-                while len(items['jam_lines']) > len(jammed_by):
-                    l = items['jam_lines'].pop()
-                    self.scene.removeItem(l)
-                while len(items['jam_lines']) < len(jammed_by):
-                    pen = QPen(QColor(255, 255, 0, 200), 2, Qt.PenStyle.DashLine)
-                    l = self.scene.addLine(0, 0, 0, 0, pen)
-                    l.setZValue(2)
-                    items['jam_lines'].append(l)
-                    
-                # 更新干擾線的位置
-                all_tracks = self.backend.get_tracks()
-                friendlies = all_tracks.get('friendlies', [])
-                for i, friendly_name in enumerate(jammed_by):
-                    friendly_data = next((f for f in friendlies if f['unit_name'] == friendly_name), None)
-                    if friendly_data:
-                        f_sx, f_sy = self.dcs_to_scene(friendly_data['x'], friendly_data['z'])
-                        # 射線延伸到很遠的地方 (模擬無限遠)
-                        # 從友軍座標往敵軍座標的方向拉長 20000 像素
-                        angle = math.atan2(sy - f_sy, sx - f_sx)
-                        end_x = f_sx + math.cos(angle) * 20000
-                        end_y = f_sy + math.sin(angle) * 20000
-                        items['jam_lines'][i].setLine(f_sx, f_sy, end_x, end_y)
-                        items['jam_lines'][i].show()
-            else:
-                for l in items['jam_lines']: l.hide()
+            for l in items['jam_lines']: l.hide()
             return
-            
-        # 如果不是被干擾也不是地面單位，清除干擾射線並顯示圖示
-        for l in items.get('jam_lines', []): l.hide()
+
+        # 針對 ECM 開啟的干擾目標，畫出從預警機/雷達站出發的干擾射線
+        if is_jammed:
+            jammed_by = data.get('jammed_by', [])
+            while len(items['jam_lines']) > len(jammed_by):
+                l = items['jam_lines'].pop()
+                self.scene.removeItem(l)
+            while len(items['jam_lines']) < len(jammed_by):
+                pen = QPen(QColor(255, 255, 0, 200), 2, Qt.PenStyle.DashLine)
+                l = self.scene.addLine(0, 0, 0, 0, pen)
+                l.setZValue(2)
+                items['jam_lines'].append(l)
+                
+            all_tracks = self.backend.get_tracks()
+            friendlies = all_tracks.get('friendlies', [])
+            for i, friendly_name in enumerate(jammed_by):
+                friendly_data = next((f for f in friendlies if f['unit_name'] == friendly_name), None)
+                if friendly_data:
+                    f_sx, f_sy = self.dcs_to_scene(friendly_data['x'], friendly_data['z'])
+                    angle = math.atan2(sy - f_sy, sx - f_sx)
+                    end_x = f_sx + math.cos(angle) * 20000
+                    end_y = f_sy + math.sin(angle) * 20000
+                    items['jam_lines'][i].setLine(f_sx, f_sy, end_x, end_y)
+                    items['jam_lines'][i].show()
+        else:
+            for l in items.get('jam_lines', []):
+                l.hide()
             
         items['icon'].show()
         items['line'].show()
