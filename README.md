@@ -72,8 +72,11 @@
   * 支援 **雙陣營雷達獨立視角 (Dual Coalition View)**：支援開房主機同時匯出藍軍 (BLUE) 與紅軍 (RED) 雷達網資料。連線玩家可自由選擇觀看陣營，維持兩軍情報徹底隔離 (Fog of War)。
   * 優化 **海量單位傳輸效能 (UDP Payload Optimization & Clutter Filter)**：實裝地面非威脅單位過濾 (自動過濾一般車輛與步兵)、數值精度壓縮 (1 位小數) 與藍紅軍分拆 UDP 封包發送，徹底解決多人大型戰役中 UDP 封包超過 64KB 上限導致停更的嚴重 Bug。
   * 修復 **ECM 電子干擾航跡標籤顯示 (Jammed Track Labels)**：修正干擾目標被錯誤隱藏字卡的 Bug，保留干擾波束射線之同時完整渲染航跡號碼 (TN)、高度與速度字卡。
-  * 優化 **航機資訊面板操作體驗 (Status Panel Retention)**：當狀態面板開啟後，點選或切換其他航機時將保留玩家手動拖曳的位置僅更新內容，不會每次重複刷新重置至視窗右上角。
-  * 實裝 **多元 ROE 宣告操作機制 (ROE Shortcuts & Context Menu)**：除了資訊面板外，新增地圖航跡右鍵選單 (Context Menu) 與鍵盤快捷鍵 (`F`=FRIENDLY, `U`=UNKNOWN, `B`=BANDIT, `H`=HOSTILE)，支援對選中航機快速批量切換 ROE 宣告與光點形狀 (菱形/圓形/正方形)。
+  * 優化 **北約 GCI 規範 UI 與動態字體縮放 (NATO GCI Compliant UI & Dynamic Font Scaling)**：徹底移除娛樂性 Emoji 與混亂多色渲染，改為北約戰管 console 嚴謹單色綠/藍/琥珀配色與極簡 `+` 十字戰術地標；同時修復 HTML 標籤內嵌 `font-size` 樣式與 layout 異步，實現 100% 實時字體與面板 UI 縮放。
+  * 實裝 **空域手繪完成命名/上色對話框 (Airspace Creation Dialog & Color Picker)**：修復空域繪製完成後的命名與色彩選擇對話框 (`AirspaceNameInput`)，支援自訂邊框與填滿顏色，並可導出/導入 `airspaces_config.json`。
+  * 修正 **Lua Exporter 防崩潰與中立陣營相容性 (Safe Lua Exporter & Neutral Scan)**：重構 `External_GCI_Exporter.lua` 陣營枚舉存取邏輯（安全回退至整數 `0, 1, 2`），防止特定 DCS 環境中存取未定義 `coalition.side` 觸發 Lua runtime 異常導致資料停止傳輸；並增加 `pcall` 異常捕獲日誌 (`env.info`) 保障腳本 100% 穩定持續執行。
+  * 修復 **啟動黑屏與地圖鏡頭對焦 (Launch Camera Auto-Centering)**：修正無空中單位時鏡頭偏移至 (0,0) 海域導致畫面黑屏的 Bug，啟動時自動精準對焦至當前地圖機場群中央。
+  * 新增 **GUI 主視窗元件與 Layout 完整性單元測試 (`test_gci_main_window_initialization_and_layout`)**：自動驗證 `centralWidget` 視圖掛載、RadarView 正確綁定、所有側邊欄按鈕按鍵實體化與字體縮放事件連動，防止未預期的縮排或掛載錯誤導致畫面全黑。
   * 支援 **PyInstaller 自動打包 (`build.ps1`)** 與 **GitHub Actions 自動 Release CI/CD**（包含 `-beta` / `-alpha` / `-rc` 的 Tag 會自動標記為 **Pre-release** 預覽版本）。
 
 ## 📡 DCS 外部戰場監控系統 (External GCI)

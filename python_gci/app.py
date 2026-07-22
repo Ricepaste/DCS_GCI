@@ -17,7 +17,7 @@ sys.excepthook = log_global_exception
 
 from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QDialog, QFormLayout, QTextEdit, QButtonGroup, QLineEdit, QInputDialog, QListWidget, QMessageBox, QGraphicsTextItem, QTabWidget, QDialogButtonBox, QComboBox
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap, QImage, QTransform, QCursor, QIcon
-from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, QLineF
+from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, QLineF, QSize
 from backend import GCIBackend
 from geometry import calculate_braa, calculate_speed, to_dms, sync_ordered_selection
 import geometry
@@ -32,6 +32,200 @@ def get_base_dir():
         return exe_dir
     else:
         return os.path.dirname(os.path.abspath(__file__))
+
+class DraggableInfoCard(QLabel):
+    def __init__(self, key_name="", parent=None):
+        super().__init__(parent)
+        self.key_name = key_name
+        self._drag_pos = None
+        self._is_dragging = False
+        self.custom_pos = None
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = True
+            self._drag_pos = event.position().toPoint()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging:
+            if self.parent():
+                new_pos = self.mapToParent(event.position().toPoint()) - self._drag_pos
+                self.move(new_pos)
+                self.custom_pos = new_pos
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+
+class BraaInfoPanel(QWidget):
+    BASE_W, BASE_H = 210, 130
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.font_scale = 1.0
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(self.BASE_W, self.BASE_H)
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.container = QWidget()
+        self._apply_container_style(11)
+        
+        layout = QVBoxLayout(self.container)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
+        
+        self.header = QLabel("BRAA READOUT")
+        self.header.setStyleSheet("color: #00e6ff; font-weight: bold; border-bottom: 1px solid #2a4035; padding-bottom: 2px;")
+        layout.addWidget(self.header)
+        
+        self.lbl_bearing  = QLabel("BEARING:  ---\u00b0")
+        self.lbl_range    = QLabel("RANGE:    --- NM")
+        self.lbl_altitude = QLabel("ALTITUDE: ---")
+        self.lbl_aspect   = QLabel("ASPECT:   ---")
+        
+        for lbl in [self.lbl_bearing, self.lbl_range, self.lbl_altitude, self.lbl_aspect]:
+            lbl.setStyleSheet("color: #b4ffb4; font-weight: bold;")
+            layout.addWidget(lbl)
+        
+        main_layout.addWidget(self.container)
+        
+        self._drag_pos = None
+        self._is_dragging = False
+        self.custom_pos = None
+
+    def _apply_container_style(self, fs):
+        self.container.setStyleSheet(f"""
+            QWidget {{
+                background-color: rgba(10, 20, 15, 235);
+                border: 1px solid #2a4035;
+                border-radius: 4px;
+                font-family: Consolas;
+                font-size: {fs}px;
+            }}
+            QLabel {{
+                font-family: Consolas;
+                font-size: {fs}px;
+                color: #b4ffb4;
+                border: none;
+                background: transparent;
+            }}
+        """)
+
+    def update_font_scale(self, scale):
+        self.font_scale = scale
+        fs = int(11 * scale)
+        self._apply_container_style(fs)
+        self.setFixedSize(int(self.BASE_W * scale), int(self.BASE_H * scale))
+
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = True
+            self._drag_pos = event.position().toPoint()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and self.parent():
+            new_pos = self.mapToParent(event.position().toPoint()) - self._drag_pos
+            self.move(new_pos)
+            self.custom_pos = new_pos
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+
+    def update_braa(self, braa):
+        self.lbl_bearing.setText(f"BEARING:  {braa['bearing']:03d}°")
+        self.lbl_range.setText(f"RANGE:    {braa['range']} NM")
+        self.lbl_altitude.setText(f"ALTITUDE: FL{braa['altitude']//100:03d}")
+        self.lbl_aspect.setText(f"ASPECT:   {braa['aspect']}")
+
+class InterceptInfoPanel(QWidget):
+    BASE_W, BASE_H = 210, 95
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.font_scale = 1.0
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(self.BASE_W, self.BASE_H)
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.container = QWidget()
+        self._apply_container_style(11)
+        
+        layout = QVBoxLayout(self.container)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
+        
+        self.header = QLabel("INTERCEPT SOLUTION")
+        self.header.setStyleSheet("color: #ffaa00; font-weight: bold; border-bottom: 1px solid #2a4035; padding-bottom: 2px;")
+        layout.addWidget(self.header)
+        
+        self.lbl_cut = QLabel("CUT HEADING: ---\u00b0")
+        self.lbl_tti = QLabel("TIME TO INT: ---")
+        
+        for lbl in [self.lbl_cut, self.lbl_tti]:
+            lbl.setStyleSheet("color: #ffaa00; font-weight: bold;")
+            layout.addWidget(lbl)
+        
+        main_layout.addWidget(self.container)
+        
+        self._drag_pos = None
+        self._is_dragging = False
+        self.custom_pos = None
+
+    def _apply_container_style(self, fs):
+        self.container.setStyleSheet(f"""
+            QWidget {{
+                background-color: rgba(10, 20, 15, 235);
+                border: 1px solid #2a4035;
+                border-radius: 4px;
+                font-family: Consolas;
+                font-size: {fs}px;
+            }}
+            QLabel {{
+                font-family: Consolas;
+                font-size: {fs}px;
+                color: #ffaa00;
+                border: none;
+                background: transparent;
+            }}
+        """)
+
+    def update_font_scale(self, scale):
+        self.font_scale = scale
+        fs = int(11 * scale)
+        self._apply_container_style(fs)
+        self.setFixedSize(int(self.BASE_W * scale), int(self.BASE_H * scale))
+
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = True
+            self._drag_pos = event.position().toPoint()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and self.parent():
+            new_pos = self.mapToParent(event.position().toPoint()) - self._drag_pos
+            self.move(new_pos)
+            self.custom_pos = new_pos
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+
+    def update_intercept(self, cut_hdg, tti_sec):
+        self.lbl_cut.setText(f"CUT HEADING: {int(cut_hdg):03d}°")
+        self.lbl_tti.setText(f"TIME TO INT: {int(tti_sec//60):02d}:{int(tti_sec%60):02d}")
 
 class AircraftStatusPanel(QWidget):
     def __init__(self, parent=None):
@@ -59,7 +253,7 @@ class AircraftStatusPanel(QWidget):
         
         header_layout = QHBoxLayout()
         self.lbl_title = QLabel("SYS TRACK")
-        self.lbl_title.setStyleSheet("font-weight: bold; font-size: 16px; border: none; background: transparent;")
+        self.lbl_title.setStyleSheet("font-weight: bold; border: none; background: transparent;")
         
         self.btn_close = QPushButton("X")
         self.btn_close.setFixedSize(20, 20)
@@ -117,11 +311,11 @@ class AircraftStatusPanel(QWidget):
         self.lbl_spd = QLabel()
         self.lbl_hdg = QLabel()
         
-        val_style = "color: #e0e0e0; font-size: 14px; font-weight: bold; border: none; background: transparent;"
+        val_style = "color: #e0e0e0; font-weight: bold; border: none; background: transparent;"
         for lbl in [self.lbl_callsign, self.lbl_iff, self.lbl_type, self.lbl_alt, self.lbl_spd, self.lbl_hdg]:
             lbl.setStyleSheet(val_style)
             
-        label_style = "color: #558888; font-size: 12px; border: none; background: transparent;"
+        label_style = "color: #558888; border: none; background: transparent;"
         
         def add_row(parent_layout, title, widget):
             l = QLabel(title)
@@ -227,7 +421,9 @@ class AircraftStatusPanel(QWidget):
     def mouseMoveEvent(self, event):
         if self._is_dragging:
             if self.parent():
-                self.move(self.mapToParent(event.position().toPoint()) - self._drag_pos)
+                new_pos = self.mapToParent(event.position().toPoint()) - self._drag_pos
+                self.move(new_pos)
+                self.custom_pos = new_pos
             event.accept()
 
     def mouseReleaseEvent(self, event):
@@ -279,10 +475,10 @@ class AircraftStatusPanel(QWidget):
         
         if is_hostile:
             self.lbl_iff.setText("NO RESPONSE")
-            self.lbl_iff.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+            self.lbl_iff.setStyleSheet("color: #ffaa00; font-weight: bold; border: none; background: transparent;")
         else:
             self.lbl_iff.setText("M4/5 VALID")
-            self.lbl_iff.setStyleSheet("color: #55ff55; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+            self.lbl_iff.setStyleSheet("color: #55ff55; font-weight: bold; border: none; background: transparent;")
             
         self.class_group.blockSignals(True)
         if current_cls == "FRIENDLY": self.btn_fnd.setChecked(True)
@@ -333,10 +529,10 @@ class AircraftStatusPanel(QWidget):
                 else:
                     self.lbl_fuel.setText(f"{fuel_pct}%")
                     
-                self.lbl_fuel.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+                self.lbl_fuel.setStyleSheet(f"color: {color}; font-weight: bold; border: none; background: transparent;")
             else:
                 self.lbl_fuel.setText("N/A")
-                self.lbl_fuel.setStyleSheet("color: #777777; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+                self.lbl_fuel.setStyleSheet("color: #777777; font-weight: bold; border: none; background: transparent;")
                 
             weapons = data.get("weapons", [])
             self.list_weapons.clear()
@@ -360,34 +556,86 @@ class AircraftStatusPanel(QWidget):
 
 
 
+def get_styled_input_text(parent, title, prompt, default_text=""):
+    from PyQt6.QtWidgets import QInputDialog
+    dialog = QInputDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.setLabelText(prompt)
+    dialog.setTextValue(default_text)
+    dialog.setStyleSheet("""
+        QDialog { background-color: #101e19; color: #b4ffb4; border: 1px solid #2a4035; font-family: Consolas; }
+        QLabel { color: #00e6ff; font-family: Consolas; font-weight: bold; font-size: 12px; }
+        QLineEdit { background-color: #162420; color: #ffffff; border: 1px solid #2a4035; border-radius: 4px; padding: 4px; font-family: Consolas; font-size: 12px; }
+        QPushButton { background-color: #162420; color: #b4ffb4; border: 1px solid #2a4035; border-radius: 4px; padding: 6px 12px; font-family: Consolas; font-weight: bold; }
+        QPushButton:hover { background-color: #2a4035; border: 1px solid #b4ffb4; }
+    """)
+    ok = dialog.exec()
+    return dialog.textValue(), ok == QInputDialog.DialogCode.Accepted
+
+def get_styled_input_double(parent, title, prompt, value=30.0, min_v=1.0, max_v=500.0, decimals=1):
+    from PyQt6.QtWidgets import QInputDialog
+    dialog = QInputDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.setLabelText(prompt)
+    dialog.setDoubleValue(value)
+    dialog.setDoubleRange(min_v, max_v)
+    dialog.setDoubleDecimals(decimals)
+    dialog.setStyleSheet("""
+        QDialog { background-color: #101e19; color: #b4ffb4; border: 1px solid #2a4035; font-family: Consolas; }
+        QLabel { color: #00e6ff; font-family: Consolas; font-weight: bold; font-size: 12px; }
+        QDoubleSpinBox { background-color: #162420; color: #ffffff; border: 1px solid #2a4035; border-radius: 4px; padding: 4px; font-family: Consolas; font-size: 12px; }
+        QPushButton { background-color: #162420; color: #b4ffb4; border: 1px solid #2a4035; border-radius: 4px; padding: 6px 12px; font-family: Consolas; font-weight: bold; }
+        QPushButton:hover { background-color: #2a4035; border: 1px solid #b4ffb4; }
+    """)
+    ok = dialog.exec()
+    return dialog.doubleValue(), ok == QInputDialog.DialogCode.Accepted
+
 class AirspaceNameInput(QWidget):
     def __init__(self, radar_view, parent=None):
         super().__init__(parent)
         self.radar_view = radar_view
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.selected_color = QColor(255, 100, 100)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.resize(250, 100)
+        self.setFixedSize(280, 160)
         
-        self.setStyleSheet("""
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.container = QWidget()
+        self.container.setStyleSheet("""
             QWidget {
-                background-color: rgba(15, 25, 20, 230);
-                border: 1px solid #336666;
+                background-color: rgba(10, 20, 15, 240);
+                border: 1px solid #2a4035;
                 border-radius: 5px;
-                color: #55aaaa;
+                color: #b4ffb4;
                 font-family: Consolas;
             }
+            QLabel {
+                font-family: Consolas;
+                font-size: 11px;
+                color: #b4ffb4;
+                border: none;
+                background: transparent;
+            }
             QLineEdit {
-                background-color: #0d1a15;
-                border: 1px solid #55aaaa;
-                color: white;
+                background-color: #162420;
+                border: 1px solid #2a4035;
+                color: #ffffff;
                 padding: 4px;
+                border-radius: 3px;
+                font-family: Consolas;
+                font-size: 11px;
             }
             QPushButton {
                 background-color: #162420;
                 border: 1px solid #2a4035;
                 color: #b4ffb4;
-                padding: 4px;
+                padding: 5px;
                 border-radius: 3px;
+                font-family: Consolas;
+                font-weight: bold;
+                font-size: 11px;
             }
             QPushButton:hover {
                 background-color: #2a4035;
@@ -395,30 +643,83 @@ class AirspaceNameInput(QWidget):
             }
         """)
         
-        layout = QVBoxLayout(self)
+        layout = QVBoxLayout(self.container)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
         
-        title = QLabel("Enter Airspace Name:")
-        title.setStyleSheet("font-weight: bold; border: none; background: transparent;")
+        title = QLabel("AIRSPACE DESIGNATION")
+        title.setStyleSheet("color: #00e6ff; font-weight: bold; font-size: 11px; border-bottom: 1px solid #2a4035; padding-bottom: 2px;")
         layout.addWidget(title)
         
         self.input = QLineEdit()
+        self.input.setPlaceholderText("Enter Airspace Name (e.g. ROZ ALPHA)")
         self.input.returnPressed.connect(self.accept)
         layout.addWidget(self.input)
         
+        color_layout = QHBoxLayout()
+        self.btn_color = QPushButton("Select Airspace Color")
+        self.btn_color.clicked.connect(self.choose_color)
+        color_layout.addWidget(self.btn_color)
+        layout.addLayout(color_layout)
+        
         btn_layout = QHBoxLayout()
-        self.btn_ok = QPushButton("OK")
+        self.btn_ok = QPushButton("CONFIRM")
         self.btn_ok.clicked.connect(self.accept)
-        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel = QPushButton("CANCEL")
         self.btn_cancel.clicked.connect(self.reject)
         
         btn_layout.addWidget(self.btn_ok)
         btn_layout.addWidget(self.btn_cancel)
         layout.addLayout(btn_layout)
         
+        main_layout.addWidget(self.container)
+        
         self._drag_pos = None
         self._is_dragging = False
+
+    def choose_color(self):
+        from PyQt6.QtWidgets import QColorDialog
+        color = QColorDialog.getColor(self.selected_color, self, "Select Airspace Color")
+        if color.isValid():
+            self.selected_color = color
+            self.radar_view.airspace_color = color
+            self.btn_color.setStyleSheet(f"background-color: {color.name()}; color: #ffffff; font-weight: bold; border: 1px solid #ffffff;")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = True
+            self._drag_pos = event.position().toPoint()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and self.parent():
+            self.move(self.mapToParent(event.position().toPoint()) - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+
+    def accept(self):
+        name = self.input.text().strip()
+        if not name:
+            name = f"Airspace {len(self.radar_view.airspaces) + 1}"
+        self.radar_view.finalize_airspace_naming(name)
+        self.close()
+
+    def reject(self):
+        if hasattr(self.radar_view, '_temp_airspace_item') and self.radar_view._temp_airspace_item:
+            try:
+                self.radar_view.scene.removeItem(self.radar_view._temp_airspace_item)
+            except:
+                pass
+        self.radar_view._is_drawing_airspace = False
+        self.radar_view._current_airspace_pts = []
+        self.radar_view._current_airspace_line = None
+        self.radar_view._temp_airspace_item = None
+        self.radar_view._temp_airspace_poly = None
+        self.radar_view.unsetCursor()
+        self.close()
         
-    
     def finalize_airspace_naming(self, name):
         original_name = name
         counter = 1
@@ -426,18 +727,18 @@ class AirspaceNameInput(QWidget):
             name = f"{original_name} ({counter})"
             counter += 1
             
+        color = getattr(self, 'airspace_color', QColor(255, 100, 100))
         text_item = self.scene.addText(name)
-        text_item.setDefaultTextColor(QColor(255, 200, 200))
+        text_item.setDefaultTextColor(color)
         text_item.setZValue(-4)
-        from PyQt6.QtGui import QFont
-        font = QFont("Consolas", 14, QFont.Weight.Bold)
+        font = QFont("Consolas", int(14 * self.font_scale), QFont.Weight.Bold)
         text_item.setFont(font)
         
         center = self._temp_airspace_poly.boundingRect().center()
         text_item.setPos(center.x() - text_item.boundingRect().width()/2, center.y() - text_item.boundingRect().height()/2)
         text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
         
-        self.airspaces[name] = {"poly": self._temp_airspace_item, "text": text_item}
+        self.airspaces[name] = {"poly": self._temp_airspace_item, "text": text_item, "color_hex": color.name()}
         self._temp_airspace_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         text_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         
@@ -490,40 +791,26 @@ class AirspaceNameInput(QWidget):
         super().showEvent(event)
 
 class AirspaceManagerPanel(QWidget):
+    BASE_W, BASE_H = 300, 420
+
     def __init__(self, radar_view, parent=None):
         super().__init__(parent)
         self.radar_view = radar_view
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.resize(300, 400)
+        self.resize(self.BASE_W, self.BASE_H)
         
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         
         self.container = QWidget()
-        self.container.setStyleSheet("""
-            QWidget {
-                background-color: rgba(15, 25, 20, 230);
-                border: 1px solid #336666;
-                border-radius: 5px;
-                color: #b4ffb4;
-                font-family: Consolas;
-            }
-            QListWidget {
-                background-color: #162420;
-                color: #b4ffb4;
-                border: 1px solid #2a4035;
-            }
-            QListWidget::item:selected {
-                background-color: #2a4035;
-            }
-        """)
+        self._apply_container_style(10)
         
         layout = QVBoxLayout(self.container)
         
         header_layout = QHBoxLayout()
         self.lbl_title = QLabel("Airspace Manager")
-        self.lbl_title.setStyleSheet("font-weight: bold; font-size: 14px; border: none; background: transparent;")
+        self.lbl_title.setStyleSheet("font-weight: bold; border: none; background: transparent;")
         
         self.btn_close = QPushButton("X")
         self.btn_close.setFixedSize(20, 20)
@@ -542,59 +829,96 @@ class AirspaceManagerPanel(QWidget):
         self.list_widget.addItems(self.radar_view.airspaces.keys())
         layout.addWidget(self.list_widget)
         
+        btn_layout = QHBoxLayout()
+        self.btn_export = QPushButton("Export JSON")
+        self.btn_export.setStyleSheet("""
+            QPushButton { background-color: #2a4035; color: #b4ffb4; border: 1px solid #336666; padding: 4px; font-weight: bold; border-radius: 4px; }
+            QPushButton:hover { background-color: #336666; color: white; }
+        """)
+        self.btn_export.clicked.connect(self.export_airspaces_json)
+        
+        self.btn_import = QPushButton("Import JSON")
+        self.btn_import.setStyleSheet("""
+            QPushButton { background-color: #2a4035; color: #b4ffb4; border: 1px solid #336666; padding: 4px; font-weight: bold; border-radius: 4px; }
+            QPushButton:hover { background-color: #336666; color: white; }
+        """)
+        self.btn_import.clicked.connect(self.import_airspaces_json)
+        
+        btn_layout.addWidget(self.btn_export)
+        btn_layout.addWidget(self.btn_import)
+        layout.addLayout(btn_layout)
+        
+        action_layout = QHBoxLayout()
+        self.btn_change_color = QPushButton("🎨 Change Color")
+        self.btn_change_color.setStyleSheet("""
+            QPushButton { background-color: #2a4035; color: #b4ffb4; border: 1px solid #336666; padding: 5px; font-weight: bold; border-radius: 4px; }
+            QPushButton:hover { background-color: #336666; color: white; }
+        """)
+        self.btn_change_color.clicked.connect(self.change_color_selected)
+
         self.btn_delete = QPushButton("Delete Selected")
         self.btn_delete.setStyleSheet("""
-            QPushButton {
-                background-color: #aa3333; 
-                color: white; 
-                border: 1px solid #ff5555;
-                padding: 5px; 
-                font-weight: bold;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #ff5555;
-            }
+            QPushButton { background-color: #aa3333; color: white; border: 1px solid #ff5555; padding: 5px; font-weight: bold; border-radius: 4px; }
+            QPushButton:hover { background-color: #ff5555; }
         """)
         self.btn_delete.clicked.connect(self.delete_selected)
-        layout.addWidget(self.btn_delete)
+        
+        action_layout.addWidget(self.btn_change_color)
+        action_layout.addWidget(self.btn_delete)
+        layout.addLayout(action_layout)
+        
+        main_layout.addWidget(self.container)
+
+    def _apply_container_style(self, fs):
+        self.container.setStyleSheet(f"""
+            QWidget {{
+                background-color: rgba(15, 25, 20, 230);
+                border: 1px solid #336666;
+                border-radius: 5px;
+                font-family: Consolas;
+                font-size: {fs}px;
+            }}
+            QListWidget {{
+                background-color: #162420;
+                color: #b4ffb4;
+                border: 1px solid #2a4035;
+                font-size: {fs}px;
+            }}
+            QListWidget::item:selected {{
+                background-color: #2a4035;
+            }}
+        """)
+
+    def update_font_scale(self, scale):
+        fs = int(10 * scale)
+        self._apply_container_style(fs)
+        self.resize(int(self.BASE_W * scale), int(self.BASE_H * scale))
+
+    def change_color_selected(self):
+        current_item = self.list_widget.currentItem()
+        if not current_item:
+            return
+        name = current_item.text()
+        if name in self.radar_view.airspaces:
+            data = self.radar_view.airspaces[name]
+            curr_color = QColor(data.get('color_hex', '#ff6464'))
+            from PyQt6.QtWidgets import QColorDialog
+            color = QColorDialog.getColor(curr_color, self, f"Change Color for '{name}'")
+            if color.isValid():
+                data['color_hex'] = color.name()
+                if 'poly' in data and data['poly']:
+                    pen = QPen(color, 2)
+                    pen.setCosmetic(True)
+                    fill_color = QColor(color.red(), color.green(), color.blue(), 50)
+                    data['poly'].setPen(pen)
+                    data['poly'].setBrush(QBrush(fill_color))
+                if 'text' in data and data['text']:
+                    data['text'].setDefaultTextColor(color)
         
         main_layout.addWidget(self.container)
         
         self._drag_pos = None
         self._is_dragging = False
-        
-    
-    def finalize_airspace_naming(self, name):
-        original_name = name
-        counter = 1
-        while name in self.airspaces:
-            name = f"{original_name} ({counter})"
-            counter += 1
-            
-        text_item = self.scene.addText(name)
-        text_item.setDefaultTextColor(QColor(255, 200, 200))
-        text_item.setZValue(-4)
-        from PyQt6.QtGui import QFont
-        font = QFont("Consolas", 14, QFont.Weight.Bold)
-        text_item.setFont(font)
-        
-        center = self._temp_airspace_poly.boundingRect().center()
-        text_item.setPos(center.x() - text_item.boundingRect().width()/2, center.y() - text_item.boundingRect().height()/2)
-        text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
-        
-        self.airspaces[name] = {"poly": self._temp_airspace_item, "text": text_item}
-        self._temp_airspace_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        text_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        
-        self._is_drawing_airspace = False
-        self._current_airspace_pts = []
-        self._current_airspace_line = None
-        self._temp_airspace_item = None
-        self._temp_airspace_poly = None
-        self.unsetCursor()
-        if hasattr(self, 'main_window'):
-            self.main_window.statusBar().showMessage("Airspace saved.")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -625,6 +949,45 @@ class AirspaceManagerPanel(QWidget):
             
         self.list_widget.takeItem(self.list_widget.row(selected))
 
+    def export_airspaces_json(self):
+        from PyQt6.QtWidgets import QFileDialog
+        filepath, _ = QFileDialog.getSaveFileName(self, "Export Airspaces", "airspaces_config.json", "JSON Files (*.json)")
+        if filepath:
+            data_to_save = {}
+            for name, data in self.radar_view.airspaces.items():
+                pts = []
+                poly = data.get('poly')
+                if poly:
+                    polygon = poly.polygon()
+                    for i in range(polygon.count()):
+                        pt = polygon.at(i)
+                        pts.append({'x': pt.x(), 'y': pt.y()})
+                color_hex = data.get('color_hex', '#ff6464')
+                data_to_save[name] = {'points': pts, 'color': color_hex}
+            import json
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data_to_save, f, indent=2, ensure_ascii=False)
+            QMessageBox.information(self, "Export Success", f"Airspaces exported to {os.path.basename(filepath)}")
+
+    def import_airspaces_json(self):
+        from PyQt6.QtWidgets import QFileDialog
+        filepath, _ = QFileDialog.getOpenFileName(self, "Import Airspaces", "", "JSON Files (*.json)")
+        if filepath and os.path.exists(filepath):
+            import json
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                for name, info in data.items():
+                    pts = [QPointF(p['x'], p['y']) for p in info.get('points', [])]
+                    c_hex = info.get('color', '#ff6464')
+                    if len(pts) >= 3:
+                        self.radar_view.create_airspace_from_points(name, pts, QColor(c_hex))
+                self.list_widget.clear()
+                self.list_widget.addItems(self.radar_view.airspaces.keys())
+                QMessageBox.information(self, "Import Success", f"Imported airspaces from {os.path.basename(filepath)}")
+            except Exception as e:
+                QMessageBox.warning(self, "Import Failed", f"Could not import file: {e}")
+
 
 class RadarView(QGraphicsView):
     def __init__(self, backend):
@@ -653,11 +1016,17 @@ class RadarView(QGraphicsView):
         self.track_classifications = {}
         
         self.expanded_labels = set()
-        self.global_labels_expanded = False
+        self.label_mode = 'minimal'  # 三段循環: 'minimal' -> 'full' -> 'none'
         
+        self.font_scale = 1.0
         self.show_airbases = True
         self.airbase_items = []
         self.airbases = {}
+        self.airspace_color = QColor(255, 100, 100, 50)
+        self.airspace_color_hex = "#ff6464"
+        self.airspaces = {}
+        self.custom_threat_rings = {}
+        self.custom_markers = {}
         
         self.show_threat_rings = True
         self.threat_ring_items = {}
@@ -752,22 +1121,10 @@ class RadarView(QGraphicsView):
         self.ruler_text.setZValue(30)
         self.ruler_text.hide()
         
-        # OSD: BRAA 面板 (固定於畫面角落)
-        self.osd_braa = QLabel(self)
-        self.osd_braa.setStyleSheet("color: yellow; font-family: Consolas; font-size: 14px; background-color: rgba(0, 0, 0, 150); padding: 5px; border-radius: 5px;")
-        self.osd_braa.setText("")
-        self.osd_braa.hide()
-        
         # 碰撞預測點 (Impact Point)
         self.impact_point = self.scene.addEllipse(-4, -4, 8, 8, QPen(QColor(255, 150, 50)), QBrush(Qt.BrushStyle.NoBrush))
         self.impact_point.setZValue(25)
         self.impact_point.hide()
-        
-        # OSD: Intercept 面板
-        self.osd_intercept = QLabel(self)
-        self.osd_intercept.setStyleSheet("color: #FFAA33; font-family: Consolas; font-size: 14px; background-color: rgba(0, 0, 0, 150); padding: 5px; border-radius: 5px;")
-        self.osd_intercept.setText("")
-        self.osd_intercept.hide()
         
         self.scale(0.01, 0.01)
         
@@ -780,22 +1137,51 @@ class RadarView(QGraphicsView):
         self.bullseye_center.setZValue(5)
         self.bullseye_item.hide()
         self.bullseye_center.hide()
-        self.bullseye_pos = None
 
-        # 空域多邊形
-        self.airspaces = {}
+        # 空域多邊形與動態繪製狀態
+        self.airspaces = getattr(self, 'airspaces', {})
         self._current_airspace_pts = []
         self._current_airspace_line = None
-        
+        self._temp_airspace_item = None
+        self._temp_airspace_poly = None
+        self._is_drawing_airspace = False
+        self._is_setting_bullseye = False
+        self._is_drawing_custom_threat = False
+        self._is_adding_marker = False
+        self.custom_threat_rings = getattr(self, 'custom_threat_rings', {})
+        self.custom_markers = getattr(self, 'custom_markers', {})
+
+        # 預設置中於第一個機場，防止未接收連線資料時畫面一片漆黑
+        if self.airbases:
+            first_ab = next(iter(self.airbases.values()))
+            absx, absy = self.dcs_to_scene(first_ab['x'], first_ab['z'])
+            self.centerOn(absx, absy)
+            self.has_centered = True
+            
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_tracks)
         self.timer.start(100)
+
+    def get_braa_panel(self):
+        parent_widget = self.main_window.centralWidget() if hasattr(self, "main_window") else self
+        if not hasattr(self, 'braa_panel') or not self.braa_panel:
+            self.braa_panel = BraaInfoPanel(parent_widget)
+            self.braa_panel.setParent(parent_widget)
+        return self.braa_panel
+
+    def get_intercept_panel(self):
+        parent_widget = self.main_window.centralWidget() if hasattr(self, "main_window") else self
+        if not hasattr(self, 'intercept_panel') or not self.intercept_panel:
+            self.intercept_panel = InterceptInfoPanel(parent_widget)
+            self.intercept_panel.setParent(parent_widget)
+        return self.intercept_panel
         
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # 固定在左下角，留出 20px 邊距
-        self.osd_braa.move(20, self.viewport().height() - self.osd_braa.height() - 20)
-        self.osd_intercept.move(self.viewport().width() - self.osd_intercept.width() - 20, self.viewport().height() - self.osd_intercept.height() - 20)
+        if hasattr(self, 'braa_panel') and self.braa_panel and not getattr(self.braa_panel, 'custom_pos', None):
+            self.braa_panel.move(20, self.height() - self.braa_panel.height() - 20)
+        if hasattr(self, 'intercept_panel') and self.intercept_panel and not getattr(self.intercept_panel, 'custom_pos', None):
+            self.intercept_panel.move(self.width() - self.intercept_panel.width() - 20, self.height() - self.intercept_panel.height() - 20)
 
     def wheelEvent(self, event):
         zoomInFactor = 1.15
@@ -889,10 +1275,26 @@ class RadarView(QGraphicsView):
             self.main_window.statusBar().showMessage("Left click to add points, Right click to finish airspace.")
             
     def toggle_all_labels(self):
-        self.global_labels_expanded = not self.global_labels_expanded
-        if not self.global_labels_expanded:
-            self.expanded_labels.clear() # 關閉全局時，順便重置個別展開狀態
-        self.setScene(self.scene)
+        """3段循環: minimal → full → none → minimal
+        minimal: 只顯 TN，可個別展開
+        full:    展開所有字卡
+        none:    完全隱藏字卡，只剩圖示
+        """
+        cycle = ['minimal', 'full', 'none']
+        idx = cycle.index(self.label_mode)
+        self.label_mode = cycle[(idx + 1) % 3]
+        if self.label_mode != 'minimal':
+            # full 或 none 時清除個別展開狀態
+            self.expanded_labels.clear()
+        for items in self.track_items.values():
+            items.pop('last_html', None)   # 強制重繪
+            if 'text' in items:
+                items['text'].setVisible(self.label_mode != 'none')
+        mode_labels = {'minimal': 'MINIMAL', 'full': 'FULL', 'none': 'NONE'}
+        if hasattr(self, 'main_window'):
+            self.main_window.statusBar().showMessage(
+                f"Label Mode: {mode_labels[self.label_mode]}", 2000)
+        self.update_tracks()
 
     def toggle_threat_rings(self):
         self.show_threat_rings = not self.show_threat_rings
@@ -901,6 +1303,10 @@ class RadarView(QGraphicsView):
         if hasattr(self, 'threat_text_items'):
             for text_item in self.threat_text_items.values():
                 text_item.setVisible(self.show_threat_rings)
+        if hasattr(self, 'custom_threat_rings'):
+            for data in self.custom_threat_rings.values():
+                if 'ring' in data and data['ring']: data['ring'].setVisible(self.show_threat_rings)
+                if 'text' in data and data['text']: data['text'].setVisible(self.show_threat_rings)
         if hasattr(self, 'main_window'):
             status = "Threat Rings ON" if self.show_threat_rings else "Threat Rings OFF"
             self.main_window.statusBar().showMessage(status)
@@ -917,6 +1323,52 @@ class RadarView(QGraphicsView):
         super().drawBackground(painter, rect)
             
     
+    def set_font_scale(self, scale):
+        self.font_scale = float(scale)
+        # 清除所有航跡的 HTML 快取，強制重新渲染並套用新 font-size
+        for items in self.track_items.values():
+            items.pop('last_html', None)
+        # 更新空域與威脅圈文字字體
+        for data in self.airspaces.values():
+            if 'text' in data and data['text']:
+                data['text'].setFont(QFont("Consolas", int(14 * self.font_scale), QFont.Weight.Bold))
+        for data in self.custom_threat_rings.values():
+            if 'text' in data and data['text']:
+                data['text'].setFont(QFont("Consolas", int(10 * self.font_scale), QFont.Weight.Bold))
+        for m in self.custom_markers.values():
+            if 'text' in m and m['text']:
+                m['text'].setFont(QFont("Consolas", int(9 * self.font_scale), QFont.Weight.Bold))
+        # 更新 HUD 面板字體 (面板存在 self 上，透過 get_braa_panel/get_intercept_panel 懶建立)
+        if hasattr(self, 'braa_panel') and self.braa_panel:
+            self.braa_panel.update_font_scale(self.font_scale)
+        if hasattr(self, 'intercept_panel') and self.intercept_panel:
+            self.intercept_panel.update_font_scale(self.font_scale)
+        self.update_tracks()
+
+    def create_airspace_from_points(self, name, pts, color=None):
+        if not color:
+            color = self.airspace_color
+        poly = QPolygonF(pts)
+        pen = QPen(color, 2)
+        pen.setCosmetic(True)
+        fill_color = QColor(color.red(), color.green(), color.blue(), 50)
+        item = self.scene.addPolygon(poly, pen, QBrush(fill_color))
+        item.setZValue(-5)
+        
+        text_item = self.scene.addText(name)
+        text_item.setDefaultTextColor(color)
+        text_item.setZValue(-4)
+        font = QFont("Consolas", int(14 * self.font_scale), QFont.Weight.Bold)
+        text_item.setFont(font)
+        
+        center = poly.boundingRect().center()
+        text_item.setPos(center.x() - text_item.boundingRect().width()/2, center.y() - text_item.boundingRect().height()/2)
+        text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        
+        item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        text_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.airspaces[name] = {"poly": item, "text": text_item, "color_hex": color.name()}
+
     def finalize_airspace_naming(self, name):
         original_name = name
         counter = 1
@@ -924,18 +1376,26 @@ class RadarView(QGraphicsView):
             name = f"{original_name} ({counter})"
             counter += 1
             
+        color = self.airspace_color
+        fill_color = QColor(color.red(), color.green(), color.blue(), 50)
+        # 更新多邊形顏色 (從暫存的紅色改為使用者選取的顏色)
+        if self._temp_airspace_item:
+            pen = QPen(color, 2)
+            pen.setCosmetic(True)
+            self._temp_airspace_item.setPen(pen)
+            self._temp_airspace_item.setBrush(QBrush(fill_color))
+        
         text_item = self.scene.addText(name)
-        text_item.setDefaultTextColor(QColor(255, 200, 200))
+        text_item.setDefaultTextColor(color)
         text_item.setZValue(-4)
-        from PyQt6.QtGui import QFont
-        font = QFont("Consolas", 14, QFont.Weight.Bold)
+        font = QFont("Consolas", int(14 * self.font_scale), QFont.Weight.Bold)
         text_item.setFont(font)
         
         center = self._temp_airspace_poly.boundingRect().center()
         text_item.setPos(center.x() - text_item.boundingRect().width()/2, center.y() - text_item.boundingRect().height()/2)
         text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
         
-        self.airspaces[name] = {"poly": self._temp_airspace_item, "text": text_item}
+        self.airspaces[name] = {"poly": self._temp_airspace_item, "text": text_item, "color_hex": color.name()}
         self._temp_airspace_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         text_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         
@@ -947,6 +1407,88 @@ class RadarView(QGraphicsView):
         self.unsetCursor()
         if hasattr(self, 'main_window'):
             self.main_window.statusBar().showMessage("Airspace saved.")
+
+    def toggle_draw_custom_threat_circle(self):
+        self._is_drawing_threat_circle = True
+        self._is_adding_marker = False
+        self._is_drawing_airspace = False
+        self._is_setting_bullseye = False
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        if hasattr(self, 'main_window'):
+            self.main_window.statusBar().showMessage("Click on map to place Custom Threat Circle...")
+
+    def add_custom_threat_ring(self, pos, radius_nm, label_name):
+        radius_m = radius_nm * 1852.0
+        pen = QPen(QColor(255, 120, 120), 1.5, Qt.PenStyle.DashLine)
+        brush = QBrush(QColor(255, 60, 60, 25))
+        ring = self.scene.addEllipse(pos.x() - radius_m, pos.y() - radius_m, radius_m * 2, radius_m * 2, pen, brush)
+        ring.setZValue(-3)
+        
+        text = self.scene.addText(f"{label_name} ({radius_nm:g}NM)")
+        text.setDefaultTextColor(QColor(255, 120, 120))
+        text.setFont(QFont("Consolas", int(10 * self.font_scale), QFont.Weight.Bold))
+        text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        text.setPos(pos.x(), pos.y() - 15)
+        text.setZValue(-2)
+        
+        show = getattr(self, 'show_threat_rings', True)
+        ring.setVisible(show)
+        text.setVisible(show)
+        
+        tag = f"CUSTOM_{len(self.custom_threat_rings)+1}_{label_name}"
+        self.custom_threat_rings[tag] = {'ring': ring, 'text': text}
+
+    def toggle_add_tactical_marker(self):
+        self._is_adding_marker = True
+        self._is_drawing_threat_circle = False
+        self._is_drawing_airspace = False
+        self._is_setting_bullseye = False
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        if hasattr(self, 'main_window'):
+            self.main_window.statusBar().showMessage("Click on map to place Tactical Marker Pin...")
+
+    def add_tactical_marker(self, pos, marker_type="MARKER", label="POINT ALPHA"):
+        # 北約 GCI 規範：極簡無裝飾十字戰術標記點 (+ LABEL)
+        pen = QPen(QColor(0, 230, 255), 1.5)
+        cross1 = self.scene.addLine(pos.x() - 4, pos.y(), pos.x() + 4, pos.y(), pen)
+        cross2 = self.scene.addLine(pos.x(), pos.y() - 4, pos.x(), pos.y() + 4, pen)
+        cross1.setZValue(12)
+        cross2.setZValue(12)
+        cross1.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        cross2.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        
+        font_pt = int(9 * self.font_scale)
+        text = self.scene.addText(f"+ {label}")
+        text.setDefaultTextColor(QColor(0, 230, 255))
+        text.setFont(QFont("Consolas", font_pt, QFont.Weight.Bold))
+        text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        text.setPos(pos.x() + 6, pos.y() - 10)
+        text.setZValue(12)
+        
+        m_id = f"MARKER_{len(self.custom_markers)+1}"
+        self.custom_markers[m_id] = {'cross1': cross1, 'cross2': cross2, 'text': text, 'label': label, 'pos': pos}
+
+    def delete_tactical_marker(self, m_id):
+        if m_id in self.custom_markers:
+            m = self.custom_markers.pop(m_id)
+            if 'cross1' in m and m['cross1']: self.scene.removeItem(m['cross1'])
+            if 'cross2' in m and m['cross2']: self.scene.removeItem(m['cross2'])
+            if 'icon' in m and m['icon']: self.scene.removeItem(m['icon'])
+            if 'text' in m and m['text']: self.scene.removeItem(m['text'])
+            if hasattr(self, 'main_window'):
+                self.main_window.statusBar().showMessage(f"Marker '{m.get('label','')}' deleted.")
+
+    def delete_custom_threat_ring(self, r_id):
+        if r_id in self.custom_threat_rings:
+            r = self.custom_threat_rings.pop(r_id)
+            if 'ring' in r and r['ring']: self.scene.removeItem(r['ring'])
+            if 'text' in r and r['text']: self.scene.removeItem(r['text'])
+            if hasattr(self, 'main_window'):
+                self.main_window.statusBar().showMessage("Custom threat ring deleted.")
+
+    def clear_all_tactical_markers(self):
+        for m_id in list(self.custom_markers.keys()):
+            self.delete_tactical_marker(m_id)
 
     def mousePressEvent(self, event):
         if getattr(self, '_is_setting_bullseye', False):
@@ -961,6 +1503,34 @@ class RadarView(QGraphicsView):
                 if hasattr(self, 'main_window'):
                     self.main_window.statusBar().showMessage("Bullseye set.")
                 self.unsetCursor()
+            return
+            
+        if getattr(self, '_is_drawing_threat_circle', False):
+            if event.button() == Qt.MouseButton.LeftButton:
+                pos = self.mapToScene(event.position().toPoint())
+                self._is_drawing_threat_circle = False
+                self.unsetCursor()
+                
+                radius_nm, ok1 = get_styled_input_double(self, "Custom Threat Ring", "Enter Radius (NM):", 30.0, 1.0, 500.0, 1)
+                if ok1:
+                    label_name, ok2 = get_styled_input_text(self, "Custom Threat Ring", "Enter Threat Label:", default_text="SAM THREAT")
+                    if ok2 and label_name:
+                        self.add_custom_threat_ring(pos, radius_nm, label_name)
+                        if hasattr(self, 'main_window'):
+                            self.main_window.statusBar().showMessage("Custom threat circle added.")
+            return
+
+        if getattr(self, '_is_adding_marker', False):
+            if event.button() == Qt.MouseButton.LeftButton:
+                pos = self.mapToScene(event.position().toPoint())
+                self._is_adding_marker = False
+                self.unsetCursor()
+                
+                m_label, ok = get_styled_input_text(self, "Tactical Marker", "Enter Marker Label:", default_text="MARKER ALPHA")
+                if ok and m_label:
+                    self.add_tactical_marker(pos, label=m_label)
+                    if hasattr(self, 'main_window'):
+                        self.main_window.statusBar().showMessage("Tactical marker added.")
             return
             
         if getattr(self, '_is_drawing_airspace', False):
@@ -1154,6 +1724,63 @@ class RadarView(QGraphicsView):
     def contextMenuEvent(self, event):
         pos = event.pos()
         clicked_items = self.items(pos)
+        
+        # 1. 檢查是否右鍵點擊戰術地標 (Tactical Marker)
+        target_marker_id = None
+        for m_id, m_data in list(self.custom_markers.items()):
+            icon = m_data.get('icon')
+            text = m_data.get('text')
+            group = m_data.get('group')
+            for item in clicked_items:
+                if item in (icon, text, group) or (group and item and item.parentItem() == group):
+                    target_marker_id = m_id
+                    break
+            if target_marker_id:
+                break
+
+        if target_marker_id:
+            m_label = self.custom_markers[target_marker_id].get('label', 'MARKER')
+            from PyQt6.QtWidgets import QMenu
+            menu = QMenu(self)
+            menu.setStyleSheet("""
+                QMenu { background-color: #162420; color: #b4ffb4; border: 1px solid #2a4035; font-family: Consolas; font-weight: bold; }
+                QMenu::item:selected { background-color: #2a4035; color: #ff5555; }
+            """)
+            act_del = menu.addAction(f"Delete Marker: [{m_label}]")
+            act_clear_all = menu.addAction("Clear All Tactical Markers")
+            action = menu.exec(event.globalPos())
+            if action == act_del:
+                self.delete_tactical_marker(target_marker_id)
+            elif action == act_clear_all:
+                self.clear_all_tactical_markers()
+            return
+
+        # 2. 檢查是否右鍵點擊手繪威脅圈 (Custom Threat Ring)
+        target_ring_id = None
+        for r_id, r_data in list(self.custom_threat_rings.items()):
+            ring = r_data.get('ring')
+            text = r_data.get('text')
+            for item in clicked_items:
+                if item in (ring, text):
+                    target_ring_id = r_id
+                    break
+            if target_ring_id:
+                break
+
+        if target_ring_id:
+            from PyQt6.QtWidgets import QMenu
+            menu = QMenu(self)
+            menu.setStyleSheet("""
+                QMenu { background-color: #162420; color: #b4ffb4; border: 1px solid #2a4035; font-family: Consolas; font-weight: bold; }
+                QMenu::item:selected { background-color: #2a4035; color: #ff5555; }
+            """)
+            act_del = menu.addAction("Delete Custom Threat Ring")
+            action = menu.exec(event.globalPos())
+            if action == act_del:
+                self.delete_custom_threat_ring(target_ring_id)
+            return
+
+        # 3. 檢查是否右鍵點擊航跡目標
         target_name = None
         for name, items in self.track_items.items():
             icon = items.get('icon')
@@ -1304,7 +1931,9 @@ class RadarView(QGraphicsView):
         current_cls = self.get_track_classification(target_data['unit_name'], is_hostile)
         self.status_panel.update_data(target_data, unit_type_str, is_hostile, current_cls)
         
-        if not self.status_panel.isVisible():
+        if getattr(self.status_panel, 'custom_pos', None):
+            self.status_panel.move(self.status_panel.custom_pos)
+        elif not self.status_panel.isVisible():
             pw = parent_widget.width()
             sw = self.status_panel.width()
             self.status_panel.move(max(10, pw - sw - 20), 20)
@@ -1417,8 +2046,8 @@ class RadarView(QGraphicsView):
                 hsx, hsy = self.dcs_to_scene(h['x'], h['z'])
                 self.centerOn(hsx, hsy)
                 self.has_centered = True
-            elif tracks.get('airbases'):
-                ab = tracks['airbases'][0]
+            elif self.airbases:
+                ab = next(iter(self.airbases.values()))
                 absx, absy = self.dcs_to_scene(ab['x'], ab['z'])
                 self.centerOn(absx, absy)
                 self.has_centered = True
@@ -1447,17 +2076,18 @@ class RadarView(QGraphicsView):
             self.intercept_line.setLine(fsx, fsy, hsx, hsy)
             self.intercept_line.show()
             
-            # 計算 BRAA
+            # 計算 BRAA 面板 (同畫布內嵌入卡片)
             braa = calculate_braa(f, h)
-            info = f"BRAA:\nBRG: {braa['bearing']:03d}°\nRNG: {braa['range']} NM\nALT: FL{braa['altitude']//100:03d}\nASP: {braa['aspect']}"
+            bp = self.get_braa_panel()
+            bp.update_braa(braa)
+            if getattr(bp, 'custom_pos', None):
+                bp.move(bp.custom_pos)
+            elif not bp.isVisible():
+                bp.move(20, self.viewport().height() - bp.height() - 20)
+            bp.show()
+            bp.raise_()
             
-            # 顯示在 OSD 面板上
-            self.osd_braa.setText(info)
-            self.osd_braa.adjustSize()
-            self.osd_braa.move(20, self.viewport().height() - self.osd_braa.height() - 20)
-            self.osd_braa.show()
-            
-            # 攔截碰撞計算
+            # 攔截碰撞計算面板 (同畫布內嵌入卡片)
             f_v = math.hypot(f['vx'], f['vz'])
             intercept = geometry.calculate_intercept_heading(f['x'], f['z'], f_v, h['x'], h['z'], h['vx'], h['vz'])
             if intercept:
@@ -1466,20 +2096,26 @@ class RadarView(QGraphicsView):
                 self.impact_point.setPos(isx, isy)
                 self.impact_point.show()
                 
-                int_info = f"INTERCEPT:\nCUT: {int(cut_hdg):03d}°\nTTI: {int(tti_sec//60):02d}:{int(tti_sec%60):02d}"
-                self.osd_intercept.setText(int_info)
-                self.osd_intercept.adjustSize()
-                self.osd_intercept.move(self.viewport().width() - self.osd_intercept.width() - 20, self.viewport().height() - self.osd_intercept.height() - 20)
-                self.osd_intercept.show()
+                ip = self.get_intercept_panel()
+                ip.update_intercept(cut_hdg, tti_sec)
+                if getattr(ip, 'custom_pos', None):
+                    ip.move(ip.custom_pos)
+                elif not ip.isVisible():
+                    ip.move(self.viewport().width() - ip.width() - 20, self.viewport().height() - ip.height() - 20)
+                ip.show()
+                ip.raise_()
             else:
                 self.impact_point.hide()
-                self.osd_intercept.hide()
+                if hasattr(self, 'intercept_panel') and self.intercept_panel:
+                    self.intercept_panel.hide()
                 
         else:
             self.intercept_line.hide()
             self.impact_point.hide()
-            self.osd_braa.hide()
-            self.osd_intercept.hide()
+            if hasattr(self, 'braa_panel') and self.braa_panel:
+                self.braa_panel.hide()
+            if hasattr(self, 'intercept_panel') and self.intercept_panel:
+                self.intercept_panel.hide()
             
         self.refresh_status_panel()
 
@@ -1691,9 +2327,39 @@ class RadarView(QGraphicsView):
             items['class_text'].setPos(sx, sy)
             items['class_text'].setTransform(QTransform().translate(-4, -18))
         
-        # 判斷是否展開字卡 (全域開啟 或 個別被點擊展開 或 處於接管狀態)
-        is_expanded = self.global_labels_expanded or (name in self.expanded_labels) or (name in self.checked_in_tracks)
-        
+        # ─── 位置與速度線：每幀無條件更新，不受 label_mode 影響 ───
+        items['icon'].setPos(sx, sy)
+        items['line'].setLine(sx, sy, fsx, fsy)
+        items['text'].setPos(sx, sy)
+        items['text'].setTransform(QTransform().translate(15, -10))
+
+        # ─── 選取框線粗細 ───
+        normal_pen = QPen(color)
+        normal_pen.setWidth(0)
+        if items['icon'].isSelected():
+            selected_pen = QPen(color)
+            selected_pen.setWidth(2)
+            items['icon'].setPen(selected_pen)
+            items['line'].setPen(normal_pen)
+        else:
+            items['icon'].setPen(normal_pen)
+            items['line'].setPen(normal_pen)
+
+        # ─── 字卡可見性與內容 ───
+        label_mode = getattr(self, 'label_mode', 'minimal')
+        is_selected = items['icon'].isSelected()
+
+        if label_mode == 'none':
+            if is_selected:
+                items['text'].setVisible(True)
+            else:
+                items['text'].setVisible(False)
+                return  # 位置已更新，僅跳過 HTML 生成
+            is_expanded = True
+        else:
+            items['text'].setVisible(True)
+            is_expanded = (label_mode == 'full') or is_selected or (name in self.expanded_labels) or (name in self.checked_in_tracks)
+
         tn = geometry.generate_link16_tn(name)
         player_name = data.get('player_name') or ''
         
@@ -1708,33 +2374,16 @@ class RadarView(QGraphicsView):
             else:
                 track_id = f"{tn}"
         
+        fs = int(10 * self.font_scale)
+        c_hex = color.name()
         if is_expanded:
             if player_name:
-                label_html = f"{player_name}<br>{track_id}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS"
+                raw = f"{player_name}<br>{track_id}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS"
             else:
-                label_html = f"{track_id}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS"
+                raw = f"{track_id}<br>FL{alt_kft * 10:03d}<br>{speed_kts} GS"
         else:
-            if player_name:
-                label_html = f"{player_name}<br>{track_id}"
-            else:
-                label_html = f"{track_id}"
-            
-        # 繪製選取狀態
-        normal_pen = QPen(color)
-        normal_pen.setWidth(0)
-        
-        if items['icon'].isSelected():
-            selected_pen = QPen(color)
-            selected_pen.setWidth(2)
-            items['icon'].setPen(selected_pen)
-            items['line'].setPen(normal_pen) # 保持速度向量粗細正常，避免被隱藏或過粗
-        else:
-            items['icon'].setPen(normal_pen)
-            items['line'].setPen(normal_pen)
-            
-        items['line'].setLine(sx, sy, fsx, fsy)
-        items['text'].setPos(sx, sy)
-        items['text'].setTransform(QTransform().translate(15, -10))
+            raw = tn
+        label_html = f'<span style="font-family:Consolas;font-size:{fs}pt;color:{c_hex};">{raw}</span>'
         
         if items.get('last_html') != label_html:
             items['text'].setHtml(label_html)
@@ -1781,6 +2430,13 @@ def create_sidebar_icon(shape_type):
         painter.drawEllipse(4, 4, 24, 24)
         painter.drawEllipse(10, 10, 12, 12)
         painter.drawEllipse(14, 14, 4, 4)
+    elif shape_type == "threat_custom":
+        painter.drawEllipse(4, 4, 24, 24)
+        painter.drawLine(4, 16, 28, 16)
+        painter.drawLine(16, 4, 16, 28)
+    elif shape_type == "pin":
+        painter.drawEllipse(10, 4, 12, 12)
+        painter.drawLine(16, 16, 16, 28)
     elif shape_type == "coalition":
         # Draw a two-shield or two-flag icon
         painter.drawRect(4, 6, 10, 20)
@@ -1858,7 +2514,7 @@ class GCIMainWindow(QMainWindow):
         
         self.btn_toggle_labels = QPushButton()
         self.btn_toggle_labels.setIcon(create_sidebar_icon("label"))
-        self.btn_toggle_labels.setToolTip("顯示/隱藏所有航跡詳細字卡")
+        self.btn_toggle_labels.setToolTip("字卡模式循環: MINIMAL (僅TN) → FULL (全展開) → NONE (無字卡) → MINIMAL")
         self.btn_toggle_labels.setFixedSize(45, 45)
         self.btn_toggle_labels.setStyleSheet(button_style)
         self.btn_toggle_labels.clicked.connect(self.radar.toggle_all_labels)
@@ -1876,7 +2532,7 @@ class GCIMainWindow(QMainWindow):
         self.btn_draw_airspace.setFixedSize(45, 45)
         self.btn_draw_airspace.setStyleSheet(button_style)
         self.btn_draw_airspace.clicked.connect(self.toggle_draw_airspace)
-        
+
         self.btn_manage_airspace = QPushButton()
         self.btn_manage_airspace.setIcon(create_sidebar_icon("manager"))
         self.btn_manage_airspace.setToolTip("管理與刪除空域")
@@ -1884,18 +2540,99 @@ class GCIMainWindow(QMainWindow):
         self.btn_manage_airspace.setStyleSheet(button_style)
         self.btn_manage_airspace.clicked.connect(self.open_airspace_manager)
         
+        self.btn_draw_custom_threat = QPushButton()
+        self.btn_draw_custom_threat.setIcon(create_sidebar_icon("threat_custom"))
+        self.btn_draw_custom_threat.setToolTip("手繪威脅圈 (Custom Threat Ring)")
+        self.btn_draw_custom_threat.setFixedSize(45, 45)
+        self.btn_draw_custom_threat.setStyleSheet(button_style)
+        self.btn_draw_custom_threat.clicked.connect(self.radar.toggle_draw_custom_threat_circle)
+
+        self.btn_add_marker = QPushButton()
+        self.btn_add_marker.setIcon(create_sidebar_icon("pin"))
+        self.btn_add_marker.setToolTip("放置戰術地標標記 (TacPen Marker)")
+        self.btn_add_marker.setFixedSize(45, 45)
+        self.btn_add_marker.setStyleSheet(button_style)
+        self.btn_add_marker.clicked.connect(self.radar.toggle_add_tactical_marker)
+
+        self.font_combo = QComboBox()
+        self.font_combo.addItems(["100%", "110%", "120%", "130%", "150%", "175%"])
+        self.font_combo.setToolTip("調整字體大小 (適配大螢幕/4K)")
+        self.font_combo.setFixedSize(52, 28)
+        self.font_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #162420; color: #b4ffb4; border: 1px solid #2a4035; font-family: Consolas; font-weight: bold; border-radius: 3px; font-size: 10px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #162420; color: #b4ffb4; selection-background-color: #2a4035;
+            }
+        """)
+        self.font_combo.currentIndexChanged.connect(self.on_font_scale_changed)
+
         sidebar.addWidget(self.btn_mark)
         sidebar.addWidget(self.btn_toggle_airbases)
         sidebar.addWidget(self.btn_toggle_threats)
+        sidebar.addWidget(self.btn_draw_custom_threat)
+        sidebar.addWidget(self.btn_add_marker)
         sidebar.addWidget(self.btn_toggle_coalition)
         sidebar.addWidget(self.btn_toggle_labels)
         sidebar.addWidget(self.btn_set_bullseye)
         sidebar.addWidget(self.btn_draw_airspace)
         sidebar.addWidget(self.btn_manage_airspace)
+        sidebar.addWidget(self.font_combo)
         sidebar.addStretch()
-        
         layout.addLayout(sidebar)
         self.setCentralWidget(main_widget)
+
+    def on_font_scale_changed(self, index):
+        scales = [1.0, 1.1, 1.2, 1.3, 1.5, 1.75]
+        if 0 <= index < len(scales):
+            self.apply_ui_scale(scales[index])
+
+    def apply_ui_scale(self, scale):
+        """全局 UI 縮放: 套用至 QApplication 字體、邊欄按鈕、HUD 面板與 Canvas 項目"""
+        self._ui_scale = scale
+        btn_size = int(45 * scale)
+        combo_h = int(28 * scale)
+        combo_w = int(56 * scale)
+        base_font_pt = int(10 * scale)
+        icon_size = int(24 * scale)
+
+        # 1. 設定 QApplication 全域字體 — 自動影響所有 QWidget (QLabel, QPushButton, QMenu, QStatusBar…)
+        from PyQt6.QtWidgets import QApplication
+        app_font = QFont("Consolas", base_font_pt)
+        QApplication.instance().setFont(app_font)
+
+        # 2. 重設邊欄按鈕尺寸與 Icon 尺寸
+        sidebar_buttons = [
+            self.btn_mark, self.btn_toggle_airbases, self.btn_toggle_threats,
+            self.btn_draw_custom_threat, self.btn_add_marker, self.btn_toggle_coalition,
+            self.btn_toggle_labels, self.btn_set_bullseye, self.btn_draw_airspace,
+            self.btn_manage_airspace,
+        ]
+        for btn in sidebar_buttons:
+            btn.setFixedSize(btn_size, btn_size)
+            btn.setIconSize(QSize(icon_size, icon_size))
+
+        # 3. 重設縮放選單尺寸
+        self.font_combo.setFixedSize(combo_w, combo_h)
+        self.font_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: #162420; color: #b4ffb4; border: 1px solid #2a4035;
+                font-family: Consolas; font-weight: bold; border-radius: 3px;
+                font-size: {base_font_pt}px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #162420; color: #b4ffb4; selection-background-color: #2a4035;
+                font-size: {base_font_pt}px;
+            }}
+        """)
+
+        # 4. Canvas 項目 (航跡標籤、空域、威脅圈、戰術標記、HUD 面板)
+        self.radar.set_font_scale(scale)
+
+        # 5. 空域管理面板 (如已開啟，立即套用縮放)
+        if hasattr(self, 'manager_panel') and self.manager_panel:
+            self.manager_panel.update_font_scale(scale)
 
     def toggle_gci_coalition(self):
         new_c = "red" if getattr(self.backend, 'coalition', 'blue') == "blue" else "blue"
