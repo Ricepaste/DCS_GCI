@@ -21,11 +21,13 @@
 ```
 
 ### Track Object (航跡物件)
-代表在 GCI 雷達畫面上管理的航跡狀態。
+代表在 GCI 雷達畫面上管理的航跡狀態。支援雙陣營隔離 View (Blue / Red)。
 ```python
 {
-    'friendlies': [Unit, ...], # 友軍單位清單
-    'hostiles': [Unit, ...]    # 敵軍單位清單
+    'blue': {'friendlies': [Unit, ...], 'hostiles': [Unit, ...]}, # 藍軍雷達視角
+    'red': {'friendlies': [Unit, ...], 'hostiles': [Unit, ...]},  # 紅軍雷達視角
+    'friendlies': [Unit, ...], # 相容性藍軍友軍清單
+    'hostiles': [Unit, ...]    # 相容性藍軍敵軍清單
 }
 ```
 
@@ -76,7 +78,8 @@ Scene_Y = -X 軸 (DCS North -> Screen Up)
 
 ### Backend 模組 (`backend.py`)
 ```python
-backend = GCIBackend(host='0.0.0.0', port=10088)
+backend = GCIBackend(host='0.0.0.0', port=10088, coalition='blue')
+backend.set_coalition('red') # 動態切換為紅軍視角 ('blue' / 'red')
 backend.start()
 backend.get_tracks() -> dict  # 回傳 {'friendlies': [], 'hostiles': []}
 backend.stop()

@@ -69,6 +69,7 @@
   * 實裝 **現代化 GCI 專屬游標 (Custom Cursor)**：自訂螢光綠準星游標並實作滑鼠手動平移 (Manual Panning)，提升擬真戰管操作手感。
   * 新增 **SAM 防空導彈動態威脅圈 (Threat Rings)**：自動識別地面 SAM/防空單位 (S-300, Patriot, Buk, Tor, Kub, Osa, Tunguska 等) 並繪製半透明虛線威脅圈；支援側邊欄專屬按鈕與快捷鍵 `T` 即時 Toggle 切換開關。
   * 新增 **多人連線架構 (TCP Client-Server)**：支援開房主機 (Host Mode) 廣播雷達資料與連線玩家 (Client Mode) 透過虛擬區域網路 (如 Hamachi) 即時觀看雷達。
+  * 支援 **雙陣營雷達獨立視角 (Dual Coalition View)**：支援開房主機同時匯出藍軍 (BLUE) 與紅軍 (RED) 雷達網資料。連線玩家可自由選擇觀看陣營，維持兩軍情報徹底隔離 (Fog of War)。
   * 支援 **PyInstaller 自動打包 (`build.ps1`)** 與 **GitHub Actions 自動 Release CI/CD**。
 
 ## 📡 DCS 外部戰場監控系統 (External GCI)
