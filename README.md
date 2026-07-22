@@ -70,6 +70,10 @@
   * 新增 **SAM 防空導彈動態威脅圈 (Threat Rings)**：自動識別地面 SAM/防空單位 (S-300, Patriot, Buk, Tor, Kub, Osa, Tunguska 等) 並繪製半透明虛線威脅圈；支援側邊欄專屬按鈕與快捷鍵 `T` 即時 Toggle 切換開關。
   * 新增 **多人連線架構 (TCP Client-Server)**：支援開房主機 (Host Mode) 廣播雷達資料與連線玩家 (Client Mode) 透過虛擬區域網路 (如 Hamachi) 即時觀看雷達。
   * 支援 **雙陣營雷達獨立視角 (Dual Coalition View)**：支援開房主機同時匯出藍軍 (BLUE) 與紅軍 (RED) 雷達網資料。連線玩家可自由選擇觀看陣營，維持兩軍情報徹底隔離 (Fog of War)。
+  * 優化 **海量單位傳輸效能 (UDP Payload Optimization & Clutter Filter)**：實裝地面非威脅單位過濾 (自動過濾一般車輛與步兵)、數值精度壓縮 (1 位小數) 與藍紅軍分拆 UDP 封包發送，徹底解決多人大型戰役中 UDP 封包超過 64KB 上限導致停更的嚴重 Bug。
+  * 修復 **ECM 電子干擾航跡標籤顯示 (Jammed Track Labels)**：修正干擾目標被錯誤隱藏字卡的 Bug，保留干擾波束射線之同時完整渲染航跡號碼 (TN)、高度與速度字卡。
+  * 優化 **航機資訊面板操作體驗 (Status Panel Retention)**：當狀態面板開啟後，點選或切換其他航機時將保留玩家手動拖曳的位置僅更新內容，不會每次重複刷新重置至視窗右上角。
+  * 實裝 **多元 ROE 宣告操作機制 (ROE Shortcuts & Context Menu)**：除了資訊面板外，新增地圖航跡右鍵選單 (Context Menu) 與鍵盤快捷鍵 (`F`=FRIENDLY, `U`=UNKNOWN, `B`=BANDIT, `H`=HOSTILE)，支援對選中航機快速批量切換 ROE 宣告與光點形狀 (菱形/圓形/正方形)。
   * 支援 **PyInstaller 自動打包 (`build.ps1`)** 與 **GitHub Actions 自動 Release CI/CD**（包含 `-beta` / `-alpha` / `-rc` 的 Tag 會自動標記為 **Pre-release** 預覽版本）。
 
 ## 📡 DCS 外部戰場監控系統 (External GCI)
