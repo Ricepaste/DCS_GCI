@@ -70,6 +70,7 @@
   * 新增 **SAM 防空導彈動態威脅圈 (Threat Rings)**：自動識別地面 SAM/防空單位 (S-300, Patriot, Buk, Tor, Kub, Osa, Tunguska 等) 並繪製半透明虛線威脅圈；支援側邊欄專屬按鈕與快捷鍵 `T` 即時 Toggle 切換開關。
   * 新增 **多人連線架構 (TCP Client-Server)**：支援開房主機 (Host Mode) 廣播雷達資料與連線玩家 (Client Mode) 透過虛擬區域網路 (如 Hamachi) 即時觀看雷達。
   * 支援 **雙陣營雷達獨立視角 (Dual Coalition View)**：支援開房主機同時匯出藍軍 (BLUE) 與紅軍 (RED) 雷達網資料。連線玩家可自由選擇觀看陣營，維持兩軍情報徹底隔離 (Fog of War)。
+  * 優化 **海量單位傳輸效能 (UDP Payload Optimization & Clutter Filter)**：實裝地面非威脅單位過濾 (自動過濾一般車輛與步兵)、數值精度壓縮 (1 位小數) 與藍紅軍分拆 UDP 封包發送，徹底解決多人大型戰役中 UDP 封包超過 64KB 上限導致停更的嚴重 Bug。
   * 支援 **PyInstaller 自動打包 (`build.ps1`)** 與 **GitHub Actions 自動 Release CI/CD**（包含 `-beta` / `-alpha` / `-rc` 的 Tag 會自動標記為 **Pre-release** 預覽版本）。
 
 ## 📡 DCS 外部戰場監控系統 (External GCI)

@@ -11,42 +11,68 @@ local socket = require("socket")
 local udp = socket.udp()
 udp:settimeout(0)
 
--- 輔助函數：取得單位資料
+local function round1(val)
+    if not val then return 0 end
+    return math.floor(val * 10 + 0.5) / 10
+end
+
+local function is_sam_or_threat(unit_type)
+    if not unit_type then return false end
+    local keywords = {
+        "S-300", "SA-", "Patriot", "Hawk", "Avenger", "Linebacker", "Roland", "Gepard", "Vulcan",
+        "Shilka", "Tunguska", "Tor", "Buk", "Kub", "Osa", "Strela", "Igla", "Stinger", "Chaparral",
+        "Rapier", "HQ-", "EWR", "1L13", "55G6", "Dog Ear", "Flat Face", "Snow Drift", "Tin Shield",
+        "Big Bird", "Clam Shell", "Flap Lid", "Tomb Stone", "S-75", "S-125", "S-200", "AAA", "SAM"
+    }
+    for _, k in ipairs(keywords) do
+        if string.find(unit_type, k) then
+            return true
+        end
+    end
+    return false
+end
+
+-- 輔助函數：取得單位資料 (優化傳輸體積)
 local function getUnitData(unit, is_friendly)
     if not unit or not unit:isExist() then return nil end
     local pos = unit:getPoint()
-    local vel = unit:getVelocity()
-    local heading = 0
+    if not pos then return nil end
     
-    -- Calculate heading from velocity vector
-    if vel.x ~= 0 or vel.z ~= 0 then
-        heading = math.atan2(vel.z, vel.x)
+    local category = -1
+    local group = unit:getGroup()
+    if group and group:isExist() then
+        category = group:getCategory() or -1
+    end
+    
+    local playerName = unit:getPlayerName() or ""
+    local unitTypeName = unit:getTypeName() or ""
+    
+    -- 若為地面單位且既非玩家操控又非 SAM/防空威脅，直接過濾 (避免大量地面步兵與車輛超出 UDP 封包限制)
+    if category == Group.Category.GROUND and playerName == "" then
+        if not is_sam_or_threat(unitTypeName) then
+            return nil
+        end
     end
 
-    local playerName = unit:getPlayerName()
+    local vel = unit:getVelocity() or {x=0, y=0, z=0}
     local unitName = unit:getName()
-    
-    local lat, lon, alt = coord.LOtoLL(pos)
-
-    local group = unit:getGroup()
     local groupName = group and group:getName() or ""
-    local category = group and group:getCategory() or -1
 
     local fuel_frac = 0
     local fuel_mass_max_kg = 0
     if unit.getFuel then
         local f = unit:getFuel()
-        if type(f) == "number" then fuel_frac = f end
+        if type(f) == "number" then fuel_frac = round1(f) end
     end
     if unit.getDesc then
         local desc = unit:getDesc()
         if desc and desc.fuelMassMax then
-            fuel_mass_max_kg = desc.fuelMassMax
+            fuel_mass_max_kg = math.floor(desc.fuelMassMax)
         end
     end
     
     local weapons = {}
-    if unit.getAmmo then
+    if playerName ~= "" and unit.getAmmo then
         local ammo = unit:getAmmo()
         if ammo and type(ammo) == "table" then
             for _, item in pairs(ammo) do
@@ -61,19 +87,16 @@ local function getUnitData(unit, is_friendly)
 
     return {
         unit_name = unitName,
-        player_name = playerName or "",
+        player_name = playerName,
         group_name = groupName,
         category = category,
-        type = unit:getTypeName(),
-        x = pos.x,
-        y = pos.y, -- altitude in DCS
-        z = pos.z,
-        lat = lat,
-        lon = lon,
-        vx = vel.x,
-        vy = vel.y,
-        vz = vel.z,
-        heading = heading,
+        type = unitTypeName,
+        x = round1(pos.x),
+        y = round1(pos.y),
+        z = round1(pos.z),
+        vx = round1(vel.x),
+        vy = round1(vel.y),
+        vz = round1(vel.z),
         is_friendly = is_friendly,
         fuel_frac = fuel_frac,
         fuel_mass_max_kg = fuel_mass_max_kg,
@@ -114,16 +137,23 @@ end
 
 local function get_airbases()
     local airbases_data = {}
-    for _, airbase in pairs(world.getAirbases()) do
-        local p = airbase:getPoint()
-        local lat, lon = coord.LOtoLL(p)
-        table.insert(airbases_data, {
-            name = airbase:getName(),
-            x = p.x,
-            z = p.z,
-            lat = lat,
-            lon = lon
-        })
+    local ab_list = world.getAirbases()
+    if ab_list then
+        for _, airbase in pairs(ab_list) do
+            if airbase and airbase:isExist() then
+                local p = airbase:getPoint()
+                if p then
+                    local lat, lon = coord.LOtoLL(p)
+                    table.insert(airbases_data, {
+                        name = airbase:getName(),
+                        x = round1(p.x),
+                        z = round1(p.z),
+                        lat = round1(lat),
+                        lon = round1(lon)
+                    })
+                end
+            end
+        end
     end
     return airbases_data
 end
@@ -208,20 +238,24 @@ end
 
 local function export_telemetry_safe(time, args)
     local status, err = pcall(function()
+        local airbases = get_airbases()
         local blue_telemetry = get_telemetry_for_coalition(coalition.side.BLUE, coalition.side.RED)
         local red_telemetry = get_telemetry_for_coalition(coalition.side.RED, coalition.side.BLUE)
         
-        local telemetry = {
+        -- 分拆為藍軍與紅軍獨立 UDP 封包發送 (防止單一 UDP 封包超出一 64KB 限制)
+        local packet_blue = encode_json({
             blue = blue_telemetry,
-            red = red_telemetry,
-            -- Backward compatibility default (Blue perspective)
             friendlies = blue_telemetry.friendlies,
             hostiles = blue_telemetry.hostiles,
-            airbases = get_airbases()
-        }
+            airbases = airbases
+        })
+        udp:sendto(packet_blue, UDP_IP, UDP_PORT)
         
-        local jsonStr = encode_json(telemetry)
-        udp:sendto(jsonStr, UDP_IP, UDP_PORT)
+        local packet_red = encode_json({
+            red = red_telemetry,
+            airbases = airbases
+        })
+        udp:sendto(packet_red, UDP_IP, UDP_PORT)
     end)
     
     if not status then
