@@ -138,3 +138,34 @@ def test_backend_starvation_prevention():
     
     new_apply_time, _, _ = backend.pending_updates["T1"]
     assert initial_apply_time == new_apply_time, "apply_time was incorrectly overwritten!"
+
+def test_dual_coalition_parsing():
+    backend = GCIBackend(port=0, stagger_updates=False, coalition="blue")
+    
+    dual_payload = json.dumps({
+        "blue": {
+            "friendlies": [{"unit_name": "BlueFighter_1"}],
+            "hostiles": [{"unit_name": "RedTarget_1"}]
+        },
+        "red": {
+            "friendlies": [{"unit_name": "RedFighter_1"}],
+            "hostiles": [{"unit_name": "BlueTarget_1"}]
+        }
+    })
+    
+    # 1. BLUE coalition parsing
+    backend.parse_telemetry(dual_payload)
+    tracks_blue = backend.get_tracks()
+    assert len(tracks_blue["friendlies"]) == 1
+    assert tracks_blue["friendlies"][0]["unit_name"] == "BlueFighter_1"
+    assert len(tracks_blue["hostiles"]) == 1
+    assert tracks_blue["hostiles"][0]["unit_name"] == "RedTarget_1"
+    
+    # 2. Switch to RED coalition
+    backend.set_coalition("red")
+    backend.parse_telemetry(dual_payload)
+    tracks_red = backend.get_tracks()
+    assert len(tracks_red["friendlies"]) == 1
+    assert tracks_red["friendlies"][0]["unit_name"] == "RedFighter_1"
+    assert len(tracks_red["hostiles"]) == 1
+    assert tracks_red["hostiles"][0]["unit_name"] == "BlueTarget_1"

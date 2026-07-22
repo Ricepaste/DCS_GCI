@@ -15,7 +15,7 @@ def log_global_exception(exc_type, exc_value, exc_tb):
 
 sys.excepthook = log_global_exception
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QDialog, QFormLayout, QTextEdit, QButtonGroup, QLineEdit, QInputDialog, QListWidget, QMessageBox, QGraphicsTextItem, QTabWidget, QDialogButtonBox
+from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QDialog, QFormLayout, QTextEdit, QButtonGroup, QLineEdit, QInputDialog, QListWidget, QMessageBox, QGraphicsTextItem, QTabWidget, QDialogButtonBox, QComboBox
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap, QImage, QTransform, QCursor, QIcon
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, QLineF
 from backend import GCIBackend
@@ -1311,12 +1311,23 @@ class RadarView(QGraphicsView):
                 for line in items.get('jam_lines', []):
                     self.scene.removeItem(line)
 
-        # 自動置中於第一個友軍 (僅執行一次)
-        if not hasattr(self, 'has_centered') and tracks['friendlies']:
-            f = tracks['friendlies'][0]
-            fsx, fsy = self.dcs_to_scene(f['x'], f['z'])
-            self.centerOn(fsx, fsy)
-            self.has_centered = True
+        # 自動置中於第一個可用的單位或機場 (僅執行一次)
+        if not hasattr(self, 'has_centered'):
+            if tracks.get('friendlies'):
+                f = tracks['friendlies'][0]
+                fsx, fsy = self.dcs_to_scene(f['x'], f['z'])
+                self.centerOn(fsx, fsy)
+                self.has_centered = True
+            elif tracks.get('hostiles'):
+                h = tracks['hostiles'][0]
+                hsx, hsy = self.dcs_to_scene(h['x'], h['z'])
+                self.centerOn(hsx, hsy)
+                self.has_centered = True
+            elif tracks.get('airbases'):
+                ab = tracks['airbases'][0]
+                absx, absy = self.dcs_to_scene(ab['x'], ab['z'])
+                self.centerOn(absx, absy)
+                self.has_centered = True
 
         # 處理點擊選取與 BRAA 引導線
         # 我們只過濾目前確實還處於 selected 狀態的項目，避免不同步
@@ -1681,6 +1692,10 @@ def create_sidebar_icon(shape_type):
         painter.drawEllipse(4, 4, 24, 24)
         painter.drawEllipse(10, 10, 12, 12)
         painter.drawEllipse(14, 14, 4, 4)
+    elif shape_type == "coalition":
+        # Draw a two-shield or two-flag icon
+        painter.drawRect(4, 6, 10, 20)
+        painter.drawRect(18, 6, 10, 20)
     
     painter.end()
     return QIcon(pixmap)
@@ -1688,7 +1703,9 @@ def create_sidebar_icon(shape_type):
 class GCIMainWindow(QMainWindow):
     def __init__(self, backend):
         super().__init__()
-        self.setWindowTitle("DCS External GCI (LotATC Lite)")
+        self.backend = backend
+        c_name = getattr(self.backend, 'coalition', 'blue').upper()
+        self.setWindowTitle(f"DCS External GCI (LotATC Lite) - [{c_name} COALITION]")
         self.resize(1200, 800)
         
         main_widget = QWidget()
@@ -1698,10 +1715,9 @@ class GCIMainWindow(QMainWindow):
         # 雷達主畫面
         self.radar = RadarView(backend)
         self.radar.main_window = self
-        self.setWindowTitle(f"DCS External GCI (LotATC Lite) - {self.radar.current_theatre}")
-        layout.addWidget(self.radar, stretch=1)
+        self.setWindowTitle(f"DCS External GCI (LotATC Lite) - {self.radar.current_theatre} [{c_name}]")
         
-        self.statusBar().showMessage("Ready")
+        layout.addWidget(self.radar, stretch=1)
         
         # 控制面板 (窄邊條)
         sidebar = QVBoxLayout()
@@ -1744,6 +1760,13 @@ class GCIMainWindow(QMainWindow):
         self.btn_toggle_threats.setStyleSheet(button_style)
         self.btn_toggle_threats.clicked.connect(self.radar.toggle_threat_rings)
         
+        self.btn_toggle_coalition = QPushButton()
+        self.btn_toggle_coalition.setIcon(create_sidebar_icon("coalition"))
+        self.btn_toggle_coalition.setToolTip("切換 GCI 觀看陣營 (BLUE / RED)")
+        self.btn_toggle_coalition.setFixedSize(45, 45)
+        self.btn_toggle_coalition.setStyleSheet(button_style)
+        self.btn_toggle_coalition.clicked.connect(self.toggle_gci_coalition)
+        
         self.btn_toggle_labels = QPushButton()
         self.btn_toggle_labels.setIcon(create_sidebar_icon("label"))
         self.btn_toggle_labels.setToolTip("顯示/隱藏所有航跡詳細字卡")
@@ -1775,6 +1798,7 @@ class GCIMainWindow(QMainWindow):
         sidebar.addWidget(self.btn_mark)
         sidebar.addWidget(self.btn_toggle_airbases)
         sidebar.addWidget(self.btn_toggle_threats)
+        sidebar.addWidget(self.btn_toggle_coalition)
         sidebar.addWidget(self.btn_toggle_labels)
         sidebar.addWidget(self.btn_set_bullseye)
         sidebar.addWidget(self.btn_draw_airspace)
@@ -1783,6 +1807,13 @@ class GCIMainWindow(QMainWindow):
         
         layout.addLayout(sidebar)
         self.setCentralWidget(main_widget)
+
+    def toggle_gci_coalition(self):
+        new_c = "red" if getattr(self.backend, 'coalition', 'blue') == "blue" else "blue"
+        self.backend.set_coalition(new_c)
+        c_upper = new_c.upper()
+        self.statusBar().showMessage(f"GCI Coalition switched to: {c_upper}")
+        self.setWindowTitle(f"DCS External GCI (LotATC Lite) - {self.radar.current_theatre} [{c_upper}]")
 
     def toggle_set_bullseye(self):
         self.radar._is_setting_bullseye = True
@@ -1830,33 +1861,46 @@ class NetworkDialog(QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GCI Network Setup")
-        self.setFixedSize(350, 200)
-        self.mode = "client"
+        self.setFixedSize(400, 250)
+        self.mode = "standalone"
+        self.coalition = "blue"
         
         layout = QVBoxLayout(self)
         
-        self.lbl_info = QLabel("Select Mode:")
+        self.lbl_info = QLabel("Select Mode & Coalition:")
         layout.addWidget(self.lbl_info)
         
         mode_layout = QHBoxLayout()
-        self.btn_client = QPushButton("Client Mode (Connect)")
-        self.btn_host = QPushButton("Host Mode (Server)")
+        self.btn_standalone = QPushButton("Standalone (Local)")
+        self.btn_client = QPushButton("Client (Connect)")
+        self.btn_host = QPushButton("Host (Server)")
+        
+        self.btn_standalone.setCheckable(True)
         self.btn_client.setCheckable(True)
         self.btn_host.setCheckable(True)
-        self.btn_client.setChecked(True)
+        self.btn_standalone.setChecked(True)
         
+        self.btn_standalone.clicked.connect(self.set_standalone_mode)
         self.btn_client.clicked.connect(self.set_client_mode)
         self.btn_host.clicked.connect(self.set_host_mode)
         
+        mode_layout.addWidget(self.btn_standalone)
         mode_layout.addWidget(self.btn_client)
         mode_layout.addWidget(self.btn_host)
         layout.addLayout(mode_layout)
         
         form_layout = QFormLayout()
-        self.ip_input = QLineEdit("127.0.0.1")
+        self.ip_input = QLineEdit("127.0.0.1 (Direct UDP)")
+        self.ip_input.setEnabled(False)
         self.port_input = QLineEdit("10088")
+        
+        self.coalition_combo = QComboBox()
+        self.coalition_combo.addItem("BLUE (NATO)", "blue")
+        self.coalition_combo.addItem("RED (Warsaw)", "red")
+        
         form_layout.addRow("Host IP (Hamachi):", self.ip_input)
-        form_layout.addRow("TCP Port:", self.port_input)
+        form_layout.addRow("Port (UDP/TCP):", self.port_input)
+        form_layout.addRow("GCI Coalition:", self.coalition_combo)
         layout.addLayout(form_layout)
         
         btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -1864,8 +1908,21 @@ class NetworkDialog(QDialog):
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
         
+    def accept(self):
+        self.coalition = self.coalition_combo.currentData()
+        super().accept()
+        
+    def set_standalone_mode(self):
+        self.mode = "standalone"
+        self.btn_standalone.setChecked(True)
+        self.btn_client.setChecked(False)
+        self.btn_host.setChecked(False)
+        self.ip_input.setEnabled(False)
+        self.ip_input.setText("127.0.0.1 (Direct UDP)")
+        
     def set_client_mode(self):
         self.mode = "client"
+        self.btn_standalone.setChecked(False)
         self.btn_client.setChecked(True)
         self.btn_host.setChecked(False)
         self.ip_input.setEnabled(True)
@@ -1873,8 +1930,9 @@ class NetworkDialog(QDialog):
         
     def set_host_mode(self):
         self.mode = "host"
-        self.btn_host.setChecked(True)
+        self.btn_standalone.setChecked(False)
         self.btn_client.setChecked(False)
+        self.btn_host.setChecked(True)
         self.ip_input.setEnabled(False)
         self.ip_input.setText("0.0.0.0 (Local Server)")
 
@@ -1889,16 +1947,18 @@ def run_app():
             
         mode = dialog.mode
         port = int(dialog.port_input.text())
+        coalition = dialog.coalition
         
-        if mode == "host":
+        if mode == "standalone":
+            backend = GCIBackend(host="127.0.0.1", port=port, coalition=coalition, protocol="udp")
+        elif mode == "host":
             from backend import GCIServer
             server = GCIServer(tcp_host="0.0.0.0", tcp_port=port, udp_port=port)
             server.start()
-            # Connect client to localhost
-            backend = GCIBackend(host="127.0.0.1", port=port)
+            backend = GCIBackend(host="127.0.0.1", port=port, coalition=coalition, protocol="tcp")
         else:
             ip = dialog.ip_input.text()
-            backend = GCIBackend(host=ip, port=port)
+            backend = GCIBackend(host=ip, port=port, coalition=coalition, protocol="tcp")
             
         backend.start()
         

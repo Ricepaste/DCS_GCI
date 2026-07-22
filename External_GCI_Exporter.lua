@@ -128,22 +128,19 @@ local function get_airbases()
     return airbases_data
 end
 
-local function export_telemetry_safe(time, args)
+local function get_telemetry_for_coalition(friendly_side, enemy_side)
     local telemetry = {
         friendlies = {},
-        hostiles = {},
-        airbases = get_airbases()
+        hostiles = {}
     }
-    
     local knownHostiles = {}
-    
     local categories = {Group.Category.AIRPLANE, Group.Category.HELICOPTER, Group.Category.GROUND}
     for _, cat in ipairs(categories) do
-        local blueGroups = coalition.getGroups(coalition.side.BLUE, cat)
-        if blueGroups then
-            for _, group in pairs(blueGroups) do
+        local friendlyGroups = coalition.getGroups(friendly_side, cat)
+        if friendlyGroups then
+            for _, group in pairs(friendlyGroups) do
                 if group and group:isExist() then
-                    -- 1. 抓取所有藍軍單位的位置
+                    -- 1. 抓取所有本方單位的位置
                     local units = group:getUnits()
                     if units then
                         for _, unit in pairs(units) do
@@ -156,14 +153,14 @@ local function export_telemetry_safe(time, args)
                         end
                     end
                     
-                    -- 2. 讓藍軍雷達網抓取紅軍單位
+                    -- 2. 讓本方雷達網抓取敵方單位
                     local controller = group:getController()
                     if controller then
                         local targets = controller:getDetectedTargets()
                         if targets then
                             for _, targetData in pairs(targets) do
                                 local enemyUnit = targetData.object
-                                if enemyUnit and enemyUnit:isExist() and enemyUnit.getCoalition and enemyUnit:getCoalition() == coalition.side.RED then
+                                if enemyUnit and enemyUnit:isExist() and enemyUnit.getCoalition and enemyUnit:getCoalition() == enemy_side then
                                     local uid = enemyUnit:getName()
                                     local is_distance_known = targetData.distance
                                     
@@ -206,8 +203,30 @@ local function export_telemetry_safe(time, args)
         end
     end
     
-    local jsonStr = encode_json(telemetry)
-    udp:sendto(jsonStr, UDP_IP, UDP_PORT)
+    return telemetry
+end
+
+local function export_telemetry_safe(time, args)
+    local status, err = pcall(function()
+        local blue_telemetry = get_telemetry_for_coalition(coalition.side.BLUE, coalition.side.RED)
+        local red_telemetry = get_telemetry_for_coalition(coalition.side.RED, coalition.side.BLUE)
+        
+        local telemetry = {
+            blue = blue_telemetry,
+            red = red_telemetry,
+            -- Backward compatibility default (Blue perspective)
+            friendlies = blue_telemetry.friendlies,
+            hostiles = blue_telemetry.hostiles,
+            airbases = get_airbases()
+        }
+        
+        local jsonStr = encode_json(telemetry)
+        udp:sendto(jsonStr, UDP_IP, UDP_PORT)
+    end)
+    
+    if not status then
+        env.info("GCI Exporter Error: " .. tostring(err))
+    end
     
     return timer.getTime() + UPDATE_INTERVAL
 end
