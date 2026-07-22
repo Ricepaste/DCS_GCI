@@ -164,35 +164,41 @@ def dcs_to_latlon(dcs_x, dcs_z, ref_x, ref_z, ref_lat, ref_lon, theatre="Caucasu
     Converts DCS Cartesian coordinates to WGS84 Lat/Lon.
     
     使用 DCS 戰區專屬的 Transverse Mercator 投影 (中央經線由戰區決定)。
-    透過一個已知的參考點 (ref_x, ref_z, ref_lat, ref_lon) 校準投影座標偏移量，
-    使得轉換精度在整張地圖上均勻且穩定 (< 250m 誤差)。
+    若 pyproj 模組不可用則使用線性估算，避免跳錯崩潰。
     """
-    import pyproj
-    proj = _get_dcs_proj(theatre)
-    
-    # 計算參考點在 DCS 投影平面上的偏移量
-    ref_easting, ref_northing = proj(ref_lon, ref_lat)
-    
-    # DCS 座標到投影平面的轉換
-    easting = ref_easting + (dcs_z - ref_z)
-    northing = ref_northing + (dcs_x - ref_x)
-    
-    lon, lat = proj(easting, northing, inverse=True)
-    return lat, lon
+    try:
+        import pyproj
+        proj = _get_dcs_proj(theatre)
+        ref_easting, ref_northing = proj(ref_lon, ref_lat)
+        easting = ref_easting + (dcs_z - ref_z)
+        northing = ref_northing + (dcs_x - ref_x)
+        lon, lat = proj(easting, northing, inverse=True)
+        return lat, lon
+    except Exception:
+        dx = dcs_x - ref_x
+        dz = dcs_z - ref_z
+        lat = ref_lat + (dx / 111120.0)
+        lon = ref_lon + (dz / (111120.0 * math.cos(math.radians(ref_lat))))
+        return lat, lon
 
 def latlon_to_dcs(lat, lon, ref_x, ref_z, ref_lat, ref_lon, theatre="Caucasus"):
     """
     Converts WGS84 Lat/Lon back to DCS Cartesian coordinates.
     """
-    import pyproj
-    proj = _get_dcs_proj(theatre)
-    
-    ref_easting, ref_northing = proj(ref_lon, ref_lat)
-    target_easting, target_northing = proj(lon, lat)
-    
-    dcs_x = ref_x + (target_northing - ref_northing)
-    dcs_z = ref_z + (target_easting - ref_easting)
-    return dcs_x, dcs_z
+    try:
+        import pyproj
+        proj = _get_dcs_proj(theatre)
+        ref_easting, ref_northing = proj(ref_lon, ref_lat)
+        target_easting, target_northing = proj(lon, lat)
+        dcs_x = ref_x + (target_northing - ref_northing)
+        dcs_z = ref_z + (target_easting - ref_easting)
+        return dcs_x, dcs_z
+    except Exception:
+        dlat = lat - ref_lat
+        dlon = lon - ref_lon
+        dcs_x = ref_x + (dlat * 111120.0)
+        dcs_z = ref_z + (dlon * 111120.0 * math.cos(math.radians(ref_lat)))
+        return dcs_x, dcs_z
 
 def generate_mgrs_grid(ref_x, ref_z, ref_lat, ref_lon, map_min_lat=39.0, map_max_lat=46.0, map_min_lon=28.0, map_max_lon=44.0):
     """
@@ -201,8 +207,11 @@ def generate_mgrs_grid(ref_x, ref_z, ref_lat, ref_lon, map_min_lat=39.0, map_max
         lines: list of tuples ((dcs_x1, dcs_z1), (dcs_x2, dcs_z2))
         labels: list of dicts {"text": "37T FH", "x": dcs_x, "z": dcs_z}
     """
-    import pyproj
-    import mgrs
+    try:
+        import pyproj
+        import mgrs
+    except Exception:
+        return [], []
     
     m = mgrs.MGRS()
     lines = []
