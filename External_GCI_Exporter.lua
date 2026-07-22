@@ -267,7 +267,7 @@ local function get_telemetry_for_coalition(friendly_side, enemy_side)
                                         pcall(function() enemy_coalition = enemyUnit:getCoalition() end)
                                     end
                                     
-                                    if enemy_coalition == enemy_side or enemy_coalition == -1 then
+                                    if enemy_coalition ~= friendly_side or enemy_coalition == -1 then
                                         local uid = getSafeName(enemyUnit)
                                         if uid and uid ~= "" then
                                             local is_distance_known = targetData.distance
@@ -305,6 +305,45 @@ local function get_telemetry_for_coalition(friendly_side, enemy_side)
         end
     end
     
+    -- 2. 抓取所有非本方陣營 (包含中立 0 / NEUTRAL、敵軍 1/2) 的所有群組與單位，歸類為 hostiles (預設 UNKNOWN)
+    local neutral_side = 0
+    if coalition and type(coalition.side) == "table" and coalition.side.NEUTRAL then
+        neutral_side = coalition.side.NEUTRAL
+    end
+    local all_sides = {0, 1, 2, neutral_side, enemy_side}
+    local scanned = {}
+    for _, side_id in ipairs(all_sides) do
+        if side_id and side_id ~= friendly_side and not scanned[side_id] then
+            scanned[side_id] = true
+            for _, cat in ipairs(categories) do
+                pcall(function()
+                    local otherGroups = coalition.getGroups(side_id, cat)
+                    if otherGroups then
+                        for _, group in pairs(otherGroups) do
+                            if group and group:isExist() then
+                                local units = group:getUnits()
+                                if units then
+                                    for _, unit in pairs(units) do
+                                        if unit and unit:isExist() then
+                                            local uid = getSafeName(unit)
+                                            if uid and uid ~= "" and not knownHostiles[uid] then
+                                                knownHostiles[uid] = {
+                                                    unit = unit,
+                                                    is_jammed = false,
+                                                    detected_by = {}
+                                                }
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end)
+            end
+        end
+    end
+    
     for uid, info in pairs(knownHostiles) do
         local data = getUnitData(info.unit, false)
         if data then
@@ -322,8 +361,14 @@ end
 local function export_telemetry_safe(time, args)
     local status, err = pcall(function()
         local airbases = get_airbases()
-        local blue_telemetry = get_telemetry_for_coalition(coalition.side.BLUE, coalition.side.RED)
-        local red_telemetry = get_telemetry_for_coalition(coalition.side.RED, coalition.side.BLUE)
+        local blue_side = 2
+        local red_side = 1
+        if coalition and type(coalition.side) == "table" then
+            if coalition.side.BLUE then blue_side = coalition.side.BLUE end
+            if coalition.side.RED then red_side = coalition.side.RED end
+        end
+        local blue_telemetry = get_telemetry_for_coalition(blue_side, red_side)
+        local red_telemetry = get_telemetry_for_coalition(red_side, blue_side)
         
         -- 分拆為藍軍與紅軍獨立 UDP 封包發送 (防止單一 UDP 封包超出一 64KB 限制)
         local packet_blue = encode_json({
@@ -336,16 +381,20 @@ local function export_telemetry_safe(time, args)
         
         local packet_red = encode_json({
             red = red_telemetry,
+            friendlies = red_telemetry.friendlies,
+            hostiles = red_telemetry.hostiles,
             airbases = airbases
         })
         udp:sendto(packet_red, UDP_IP, UDP_PORT)
     end)
     
     if not status then
-        env.info("GCI Exporter Error: " .. tostring(err))
+        if env and env.info then
+            env.info("[External_GCI_Exporter] EXPORT ERROR: " .. tostring(err))
+        end
     end
     
-    return timer.getTime() + UPDATE_INTERVAL
+    return time + 0.1
 end
 
 timer.scheduleFunction(export_telemetry_safe, nil, timer.getTime() + UPDATE_INTERVAL)

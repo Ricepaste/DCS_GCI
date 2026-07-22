@@ -162,3 +162,76 @@ def test_status_panel_update_data_without_heading():
     # Should not raise KeyError: 'heading'
     panel.update_data(data, "Su-27", True, "HOSTILE")
     assert panel.lbl_hdg.text() == "045°"
+
+def test_font_scale_and_custom_threat_ring():
+    backend = GCIBackend(port=0, stagger_updates=False)
+    radar = RadarView(backend)
+    
+    # Test setting font scale
+    radar.set_font_scale(1.5)
+    assert radar.font_scale == 1.5
+    
+    # Test adding custom threat circle
+    from PyQt6.QtCore import QPointF
+    pos = QPointF(50000, 50000)
+    radar.add_custom_threat_ring(pos, radius_nm=35.0, label_name="TEST_SAM")
+    assert len(radar.custom_threat_rings) == 1
+    
+    # Test adding TacPen marker
+    radar.add_tactical_marker(pos, label="PILOT DOWN")
+    assert len(radar.custom_markers) == 1
+    
+    # Test toggling threat rings hides custom threat ring
+    radar.toggle_threat_rings()
+    assert radar.custom_threat_rings[next(iter(radar.custom_threat_rings))]['ring'].isVisible() == False
+    
+    # Test deleting tactical marker and threat ring
+    m_id = next(iter(radar.custom_markers))
+    radar.delete_tactical_marker(m_id)
+    assert len(radar.custom_markers) == 0
+
+def test_airspace_json_export_import(tmp_path):
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QColor
+    from app import AirspaceManagerPanel
+    
+    backend = GCIBackend(port=0, stagger_updates=False)
+    radar = RadarView(backend)
+    
+    pts = [QPointF(0, 0), QPointF(100, 0), QPointF(100, 100)]
+    radar.create_airspace_from_points("ROZ ALPHA", pts, QColor(255, 100, 100))
+    assert "ROZ ALPHA" in radar.airspaces
+    
+    panel = AirspaceManagerPanel(radar)
+    assert panel.list_widget.count() == 1
+
+def test_gci_main_window_initialization_and_layout():
+    from app import GCIMainWindow
+    backend = GCIBackend(port=0, stagger_updates=False)
+    window = GCIMainWindow(backend)
+    
+    # 1. Verify centralWidget is set (not None/black screen)
+    assert window.centralWidget() is not None
+    
+    # 2. Verify radar view is attached
+    assert hasattr(window, 'radar')
+    assert window.radar is not None
+    
+    # 3. Verify sidebar buttons are initialized and present
+    assert window.btn_mark is not None
+    assert window.btn_toggle_airbases is not None
+    assert window.btn_toggle_threats is not None
+    assert window.btn_toggle_coalition is not None
+    assert window.btn_draw_custom_threat is not None
+    assert window.btn_add_marker is not None
+    assert window.font_combo is not None
+    
+    # 4. Test font combo change updates radar font scale
+    window.font_combo.setCurrentIndex(4) # 150% (index 4 in [100,110,120,130,150,175])
+    assert window.radar.font_scale == 1.5
+
+    # 5. Verify airspace state variables are initialized on radar
+    assert hasattr(window.radar, '_current_airspace_line')
+    assert hasattr(window.radar, '_is_drawing_airspace')
+    assert window.radar._current_airspace_line is None
+    assert window.radar._is_drawing_airspace is False
