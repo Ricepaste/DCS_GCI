@@ -394,7 +394,9 @@ local function export_telemetry_safe(time, args)
         end
     end
     
-    return time + 0.1
+    -- 確保當 timer 傳入的 time 為 nil 時（如手動/特殊呼叫），使用 timer.getTime() 作為基準時間
+    local current_time = time or (timer and timer.getTime and timer.getTime()) or 0
+    return current_time + UPDATE_INTERVAL
 end
 
 timer.scheduleFunction(export_telemetry_safe, nil, timer.getTime() + UPDATE_INTERVAL)

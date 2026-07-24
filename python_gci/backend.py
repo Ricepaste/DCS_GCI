@@ -240,9 +240,17 @@ class GCIBackend:
         current_time = time.time()
         
         c = getattr(self, 'coalition', 'blue').lower()
-        if c in telemetry and isinstance(telemetry[c], dict):
-            side_data = telemetry[c]
+        # 判斷是否為分拆陣營封包 (如果含有 blue 或 red 的 key)
+        has_split_coalition = "blue" in telemetry or "red" in telemetry
+        
+        if has_split_coalition:
+            if c in telemetry and isinstance(telemetry[c], dict):
+                side_data = telemetry[c]
+            else:
+                # 封包為另一陣營的分拆封包，丟棄不解析
+                return
         else:
+            # 舊版單一陣營或測試用扁平封包，直接使用根節點
             side_data = telemetry
         
         with self.lock:

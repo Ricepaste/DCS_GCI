@@ -74,7 +74,7 @@
   * 修復 **ECM 電子干擾航跡標籤顯示 (Jammed Track Labels)**：修正干擾目標被錯誤隱藏字卡的 Bug，保留干擾波束射線之同時完整渲染航跡號碼 (TN)、高度與速度字卡。
   * 優化 **北約 GCI 規範 UI 與動態字體縮放 (NATO GCI Compliant UI & Dynamic Font Scaling)**：徹底移除娛樂性 Emoji 與混亂多色渲染，改為北約戰管 console 嚴謹單色綠/藍/琥珀配色與極簡 `+` 十字戰術地標；同時修復 HTML 標籤內嵌 `font-size` 樣式與 layout 異步，實現 100% 實時字體與面板 UI 縮放。
   * 實裝 **空域手繪完成命名/上色對話框 (Airspace Creation Dialog & Color Picker)**：修復空域繪製完成後的命名與色彩選擇對話框 (`AirspaceNameInput`)，支援自訂邊框與填滿顏色，並可導出/導入 `airspaces_config.json`。
-  * 修正 **Lua Exporter 防崩潰與中立陣營相容性 (Safe Lua Exporter & Neutral Scan)**：重構 `External_GCI_Exporter.lua` 陣營枚舉存取邏輯（安全回退至整數 `0, 1, 2`），防止特定 DCS 環境中存取未定義 `coalition.side` 觸發 Lua runtime 異常導致資料停止傳輸；並增加 `pcall` 異常捕獲日誌 (`env.info`) 保障腳本 100% 穩定持續執行。
+  * 修正 **Lua Exporter 防崩潰與中立陣營相容性 (Safe Lua Exporter & Neutral Scan)**：重構 `External_GCI_Exporter.lua` 陣營枚舉存取邏輯（安全回退至整數 `0, 1, 2`），防止特定 DCS 環境中存取未定義 `coalition.side` 觸發 Lua runtime 異常；修復 `export_telemetry_safe(time)` 的 `time` 參數在部分特定呼叫環境下為 `nil` 時嘗試進行加法運算導致的 `attempt to perform arithmetic on local 'time' (a nil value)` 崩潰異常（改為回退至 `timer.getTime()`），保障腳本 100% 穩定持續執行。
   * 修復 **啟動黑屏與地圖鏡頭對焦 (Launch Camera Auto-Centering)**：修正無空中單位時鏡頭偏移至 (0,0) 海域導致畫面黑屏的 Bug，啟動時自動精準對焦至當前地圖機場群中央。
   * 新增 **GUI 主視窗元件與 Layout 完整性單元測試 (`test_gci_main_window_initialization_and_layout`)**：自動驗證 `centralWidget` 視圖掛載、RadarView 正確綁定、所有側邊欄按鈕按鍵實體化與字體縮放事件連動，防止未預期的縮排或掛載錯誤導致畫面全黑。
   * 支援 **PyInstaller 自動打包 (`build.ps1`)** 與 **GitHub Actions 自動 Release CI/CD**（包含 `-beta` / `-alpha` / `-rc` 的 Tag 會自動標記為 **Pre-release** 預覽版本）。
