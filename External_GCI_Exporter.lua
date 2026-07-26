@@ -140,7 +140,7 @@ local function getUnitData(unit, is_friendly)
     end
     
     local weapons = {}
-    if playerName ~= "" and unit.getAmmo then
+    if unit.getAmmo then
         local status_a, ammo = pcall(function() return unit:getAmmo() end)
         if status_a and ammo and type(ammo) == "table" then
             for _, item in pairs(ammo) do
@@ -358,7 +358,161 @@ local function get_telemetry_for_coalition(friendly_side, enemy_side)
     return telemetry
 end
 
+-- Setup UDP Command Listening Socket (Port 10089)
+local cmd_udp = socket.udp()
+cmd_udp:setsockname("*", 10089)
+cmd_udp:settimeout(0)
+
+local spawn_count = 0
+
+local function process_incoming_commands()
+    while true do
+        local data, ip, port = cmd_udp:receivefrom()
+        if not data then break end
+        
+        local status_run, err = pcall(function()
+            local cmd = nil
+            if net and net.json2lua then
+                cmd = net.json2lua(data)
+            else
+                local action = data:match('"action"%s*:%s*"([^"]+)"')
+                if action then
+                    cmd = { action = action }
+                    cmd.group_name = data:match('"group_name"%s*:%s*"([^"]+)"')
+                    cmd.target_name = data:match('"target_name"%s*:%s*"([^"]+)"')
+                    cmd.roe_mode = data:match('"roe_mode"%s*:%s*"([^"]+)"')
+                    cmd.unit_type = data:match('"unit_type"%s*:%s*"([^"]+)"')
+                    cmd.side = data:match('"side"%s*:%s*"([^"]+)"')
+                    cmd.x = tonumber(data:match('"x"%s*:%s*([%d%.%-]+)'))
+                    cmd.z = tonumber(data:match('"z"%s*:%s*([%d%.%-]+)'))
+                end
+            end
+            
+            if not cmd or not cmd.action then return end
+            
+            if env and env.info then
+                env.info(string.format("[GCI CMD LOG] Received action='%s', group='%s', target='%s', roe='%s', x=%s, z=%s",
+                    tostring(cmd.action), tostring(cmd.group_name), tostring(cmd.target_name), tostring(cmd.roe_mode), tostring(cmd.x), tostring(cmd.z)))
+            end
+            
+            if cmd.action == "vector" and cmd.group_name and cmd.x and cmd.z then
+                local grp = Group.getByName(cmd.group_name) or (Unit.getByName(cmd.group_name) and Unit.getByName(cmd.group_name):getGroup())
+                if grp and grp:isExist() then
+                    local controller = grp:getController()
+                    if controller then
+                        -- 強制彈出/取消當前的 Attack Task
+                        pcall(function() controller:popTask() end)
+                        
+                        -- 1. 獲取高度與速度
+                        local current_alt = 6000
+                        local current_speed = 250
+                        local u1 = grp:getUnit(1)
+                        if u1 and u1:isExist() then
+                            local p = u1:getPoint()
+                            local v = u1:getVelocity()
+                            if p and p.y then current_alt = p.y end
+                            if v then current_speed = math.max(150, math.floor(math.sqrt((v.x or 0)*(v.x or 0) + (v.z or 0)*(v.z or 0)))) end
+                        end
+                        
+                        -- 2. 直接呼叫 controller:setTask() 重新設置航線點 (最乾淨、最可靠且能完全中斷舊任務)
+                        local cur_x, cur_z = cmd.x, cmd.z
+                        if u1 and u1:isExist() then
+                            local pt = u1:getPoint()
+                            if pt then cur_x, cur_z = pt.x, pt.z end
+                        end
+                        
+                        local mission_task = {
+                            id = 'Mission',
+                            params = {
+                                route = {
+                                    points = {
+                                        [1] = { x = cur_x, y = cur_z, alt = current_alt, speed = current_speed, action = 'Turning Point', type = 'Turning Point' },
+                                        [2] = { x = cmd.x, y = cmd.z, alt = current_alt, speed = current_speed, action = 'Turning Point', type = 'Turning Point' }
+                                    }
+                                }
+                            }
+                        }
+                        pcall(function() controller:setTask(mission_task) end)
+                        
+                        if env and env.info then
+                            env.info(string.format("[GCI Command] Group %s vectored to X:%.1f, Z:%.1f", cmd.group_name, cmd.x, cmd.z))
+                        end
+                    end
+                end
+            elseif cmd.action == "attack_target" and cmd.group_name and cmd.target_name then
+                local grp = Group.getByName(cmd.group_name) or (Unit.getByName(cmd.group_name) and Unit.getByName(cmd.group_name):getGroup())
+                local tgt_unit = Unit.getByName(cmd.target_name)
+                local tgt_grp = Group.getByName(cmd.target_name) or (tgt_unit and tgt_unit:getGroup())
+                
+                if grp and grp:isExist() and (tgt_unit or tgt_grp) then
+                    local controller = grp:getController()
+                    if controller then
+                        -- 1. 設定 ROE 為 OPEN_FIRE_WEAPON_FREE (1: 優先交戰指定目標)
+                        pcall(function()
+                            if AI and AI.Option and AI.Option.Air and AI.Option.Air.id and AI.Option.Air.val and AI.Option.Air.val.ROE then
+                                controller:setOption(AI.Option.Air.id.ROE, AI.Option.Air.val.ROE.OPEN_FIRE_WEAPON_FREE)
+                            end
+                        end)
+
+                        -- 2. 嚴格符合 Hoggit DCS API 規範: pushTask AttackUnit / AttackGroup 包含 groupAttack與expend
+                        if tgt_unit and tgt_unit:isExist() then
+                            controller:pushTask({
+                                id = 'AttackUnit',
+                                params = {
+                                    unitId = tgt_unit:getID(),
+                                    groupAttack = true,
+                                    expend = "All"
+                                }
+                            })
+                        elseif tgt_grp and tgt_grp:isExist() then
+                            controller:pushTask({
+                                id = 'AttackGroup',
+                                params = {
+                                    groupId = tgt_grp:getID(),
+                                    groupAttack = true,
+                                    expend = "All"
+                                }
+                            })
+                        end
+
+                        if env and env.info then
+                            env.info(string.format("[GCI Command] Group %s ordered to attack target %s (groupAttack=true, expend=All)", cmd.group_name, cmd.target_name))
+                        end
+                    end
+                end
+            elseif cmd.action == "set_roe" and cmd.group_name and cmd.roe_mode then
+                local grp = Group.getByName(cmd.group_name) or (Unit.getByName(cmd.group_name) and Unit.getByName(cmd.group_name):getGroup())
+                if grp and grp:isExist() then
+                    local controller = grp:getController()
+                    if controller and AI and AI.Option and AI.Option.Air and AI.Option.Air.id then
+                        pcall(function()
+                            local roe_map = {
+                                WEAPON_FREE = AI.Option.Air.val.ROE.WEAPON_FREE,           -- 0
+                                WEAPON_HOLD = AI.Option.Air.val.ROE.WEAPON_HOLD,           -- 4
+                                RETURN_FIRE = AI.Option.Air.val.ROE.RETURN_FIRE,           -- 3
+                                DESIGNATED_TARGET = AI.Option.Air.val.ROE.OPEN_FIRE       -- 2 (DCS 官方 API: OPEN_FIRE 表示只攻擊指定目標)
+                            }
+                            local roe_val = roe_map[cmd.roe_mode] or AI.Option.Air.val.ROE.OPEN_FIRE
+                            controller:setOption(AI.Option.Air.id.ROE, roe_val)
+                            
+                            -- 如果將 ROE 設為 WEAPON_HOLD 或 RETURN_FIRE，強制清空/彈出當前主動攻擊 Task
+                            if cmd.roe_mode == "WEAPON_HOLD" or cmd.roe_mode == "RETURN_FIRE" then
+                                controller:popTask()
+                            end
+                        end)
+                    end
+                end
+            end
+        end)
+        
+        if not status_run and env and env.info then
+            env.info("[External_GCI_Exporter] Command Process Error: " .. tostring(err))
+        end
+    end
+end
+
 local function export_telemetry_safe(time, args)
+    process_incoming_commands()
     local status, err = pcall(function()
         local airbases = get_airbases()
         local blue_side = 2

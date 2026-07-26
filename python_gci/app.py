@@ -468,7 +468,8 @@ class AircraftStatusPanel(QWidget):
             
         self.current_unit = name
         
-        title = f"TRK {name[-4:]}" if len(name) > 4 else "TRK"
+        tn = geometry.generate_link16_tn(name)
+        title = f"TRK #{tn}"
         self.lbl_title.setText(title)
         
         self.lbl_callsign.setText(name)
@@ -1124,6 +1125,34 @@ class RadarView(QGraphicsView):
         self.ruler_text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
         self.ruler_text.setZValue(30)
         self.ruler_text.hide()
+
+        # AI Vector 預覽線與文字 (Vectoring Preview)
+        pen_vec = QPen(QColor(0, 255, 255), 2, Qt.PenStyle.DashDotLine)
+        pen_vec.setCosmetic(True)
+        self.vector_line = self.scene.addLine(0, 0, 0, 0, pen_vec)
+        self.vector_line.setZValue(32)
+        self.vector_line.hide()
+        
+        self.vector_text = self.scene.addText("")
+        self.vector_text.setFont(QFont("Consolas", 11, QFont.Weight.Bold))
+        self.vector_text.setDefaultTextColor(QColor(0, 255, 255))
+        self.vector_text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self.vector_text.setZValue(32)
+        self.vector_text.hide()
+
+        # AI Attack Target 預覽線與文字 (Attack Selection Preview)
+        pen_atk = QPen(QColor(255, 50, 50), 2, Qt.PenStyle.DashLine)
+        pen_atk.setCosmetic(True)
+        self.attack_line = self.scene.addLine(0, 0, 0, 0, pen_atk)
+        self.attack_line.setZValue(33)
+        self.attack_line.hide()
+        
+        self.attack_text = self.scene.addText("")
+        self.attack_text.setFont(QFont("Consolas", 11, QFont.Weight.Bold))
+        self.attack_text.setDefaultTextColor(QColor(255, 50, 50))
+        self.attack_text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self.attack_text.setZValue(33)
+        self.attack_text.hide()
         
         # 碰撞預測點 (Impact Point)
         self.impact_point = self.scene.addEllipse(-4, -4, 8, 8, QPen(QColor(255, 150, 50)), QBrush(Qt.BrushStyle.NoBrush))
@@ -1254,6 +1283,9 @@ class RadarView(QGraphicsView):
 
     def dcs_to_scene(self, x, z):
         return z, -x
+
+    def scene_to_dcs(self, sx, sy):
+        return -sy, sx
 
     def draw_airbases(self):
         for name, pos in self.airbases.items():
@@ -1514,6 +1546,87 @@ class RadarView(QGraphicsView):
             self.delete_tactical_marker(m_id)
 
     def mousePressEvent(self, event):
+        if getattr(self, '_is_vectoring_ai', False):
+            if event.button() == Qt.MouseButton.LeftButton:
+                pos = self.mapToScene(event.position().toPoint())
+                dcs_x, dcs_z = self.scene_to_dcs(pos.x(), pos.y())
+                target_grp = getattr(self, '_vector_target_group', None)
+                
+                self._is_vectoring_ai = False
+                self._vector_target_group = None
+                self.vector_line.hide()
+                self.vector_text.hide()
+                self.unsetCursor()
+                
+                if target_grp:
+                    cmd = {
+                        "action": "vector",
+                        "group_name": target_grp,
+                        "x": dcs_x,
+                        "z": dcs_z
+                    }
+                    if self.backend.send_command(cmd):
+                        if hasattr(self, 'main_window'):
+                            self.main_window.statusBar().showMessage(f"Vectored '{target_grp}' to destination.")
+            elif event.button() == Qt.MouseButton.RightButton:
+                self._is_vectoring_ai = False
+                self._vector_target_group = None
+                self.vector_line.hide()
+                self.vector_text.hide()
+                self.unsetCursor()
+                self.viewport().unsetCursor()
+                if hasattr(self, 'main_window'):
+                    self.main_window.statusBar().showMessage("Vectoring cancelled.")
+            return
+
+        if getattr(self, '_is_selecting_attack_target', False):
+            if event.button() == Qt.MouseButton.LeftButton:
+                pos = event.position().toPoint()
+                clicked_items = self.items(pos)
+                target_name = None
+                for name, items in self.track_items.items():
+                    icon = items.get('icon')
+                    text = items.get('text')
+                    class_text = items.get('class_text')
+                    for item in clicked_items:
+                        if item in (icon, text, class_text) or (item and item.parentItem() in (icon, text, class_text)):
+                            target_name = name
+                            break
+                    if target_name: break
+                    
+                attacker_grp = getattr(self, '_attack_attacker_group', None)
+                self._is_selecting_attack_target = False
+                self._attack_attacker_group = None
+                self.attack_line.hide()
+                self.attack_text.hide()
+                self.unsetCursor()
+                self.viewport().unsetCursor()
+                
+                if attacker_grp and target_name:
+                    cmd = {
+                        "action": "attack_target",
+                        "group_name": attacker_grp,
+                        "target_name": target_name
+                    }
+                    if self.backend.send_command(cmd):
+                        if hasattr(self, 'main_window'):
+                            atk_tn = geometry.generate_link16_tn(attacker_grp)
+                            tgt_tn = geometry.generate_link16_tn(target_name)
+                            self.main_window.statusBar().showMessage(f"ATTACK ORDER: Group TN #{atk_tn} ordered to engage Target TN #{tgt_tn}.")
+                else:
+                    if hasattr(self, 'main_window'):
+                        self.main_window.statusBar().showMessage("Attack order cancelled (No valid target clicked).")
+            elif event.button() == Qt.MouseButton.RightButton:
+                self._is_selecting_attack_target = False
+                self._attack_attacker_group = None
+                self.attack_line.hide()
+                self.attack_text.hide()
+                self.unsetCursor()
+                self.viewport().unsetCursor()
+                if hasattr(self, 'main_window'):
+                    self.main_window.statusBar().showMessage("Attack order cancelled.")
+            return
+
         if getattr(self, '_is_setting_bullseye', False):
             if event.button() == Qt.MouseButton.LeftButton:
                 pos = self.mapToScene(event.position().toPoint())
@@ -1602,13 +1715,9 @@ class RadarView(QGraphicsView):
                 return
 
         if event.button() == Qt.MouseButton.RightButton:
-            self._is_ruler = True
+            # 右鍵僅在拖曳距離產生時才轉為 Ruler 測距尺，確保單擊右鍵能彈出 ContextMenu
+            self._ruler_press_pos = event.position().toPoint()
             self._ruler_start = self.mapToScene(event.position().toPoint())
-            self.ruler_line.setLine(self._ruler_start.x(), self._ruler_start.y(), self._ruler_start.x(), self._ruler_start.y())
-            self.ruler_line.show()
-            self.ruler_text.setPlainText("")
-            self.ruler_text.setPos(self._ruler_start)
-            self.ruler_text.show()
             return
 
             
@@ -1668,6 +1777,61 @@ class RadarView(QGraphicsView):
             else:
                 self.main_window.statusBar().showMessage("Cursor: No Reference Data")
 
+        if getattr(self, '_is_vectoring_ai', False):
+            grp_name = getattr(self, '_vector_target_group', 'AI')
+            start_pos = None
+            for name, items in self.track_items.items():
+                if name == grp_name or items.get('group_name') == grp_name:
+                    if 'icon' in items:
+                        start_pos = items['icon'].pos()
+                        break
+            if not start_pos:
+                start_pos = current_pos
+                
+            self.vector_line.setLine(start_pos.x(), start_pos.y(), current_pos.x(), current_pos.y())
+            self.vector_line.show()
+            
+            s_dx = -start_pos.y()
+            s_dz = start_pos.x()
+            e_dx = -current_pos.y()
+            e_dz = current_pos.x()
+            
+            v_dx = e_dx - s_dx
+            v_dz = e_dz - s_dz
+            v_hdg = (math.degrees(math.atan2(v_dz, v_dx)) + 360) % 360
+            v_dist = math.hypot(v_dx, v_dz) / 1852.0
+            
+            self.vector_text.setPlainText(f"VECTOR '{grp_name}' -> {int(v_hdg):03d}° / {v_dist:.1f} NM")
+            self.vector_text.setPos(current_pos.x() + 15, current_pos.y() - 15)
+            self.vector_text.show()
+
+        if getattr(self, '_is_selecting_attack_target', False):
+            grp_name = getattr(self, '_attack_attacker_group', 'AI')
+            start_pos = None
+            for name, items in self.track_items.items():
+                if name == grp_name or items.get('group_name') == grp_name:
+                    if 'icon' in items:
+                        start_pos = items['icon'].pos()
+                        break
+            if not start_pos: start_pos = current_pos
+            
+            self.attack_line.setLine(start_pos.x(), start_pos.y(), current_pos.x(), current_pos.y())
+            self.attack_line.show()
+            
+            s_dx = -start_pos.y()
+            s_dz = start_pos.x()
+            e_dx = -current_pos.y()
+            e_dz = current_pos.x()
+            v_dx = e_dx - s_dx
+            v_dz = e_dz - s_dz
+            v_hdg = (math.degrees(math.atan2(v_dz, v_dx)) + 360) % 360
+            v_dist = math.hypot(v_dx, v_dz) / 1852.0
+            
+            atk_tn = geometry.generate_link16_tn(grp_name)
+            self.attack_text.setPlainText(f"ATTACK TARGET [TN #{atk_tn}] -> {int(v_hdg):03d}° / {v_dist:.1f} NM")
+            self.attack_text.setPos(current_pos.x() + 15, current_pos.y() - 15)
+            self.attack_text.show()
+
         if getattr(self, '_is_drawing_airspace', False) and len(self._current_airspace_pts) > 0:
             preview_pts = self._current_airspace_pts + [current_pos]
             if self._current_airspace_line:
@@ -1677,6 +1841,15 @@ class RadarView(QGraphicsView):
             pen.setCosmetic(True)
             self._current_airspace_line = self.scene.addPolygon(poly, pen, QBrush(Qt.BrushStyle.NoBrush))
             self._current_airspace_line.setZValue(-5)
+
+        if getattr(self, '_ruler_press_pos', None) and not getattr(self, '_is_ruler', False):
+            move_dist = (event.position().toPoint() - self._ruler_press_pos).manhattanLength()
+            if move_dist > 5:
+                self._is_ruler = True
+                self.ruler_line.setLine(self._ruler_start.x(), self._ruler_start.y(), current_pos.x(), current_pos.y())
+                self.ruler_line.show()
+                self.ruler_text.setPos(self._ruler_start)
+                self.ruler_text.show()
 
         if getattr(self, '_is_panning', False):
             delta = event.position().toPoint() - self._pan_start
@@ -1719,11 +1892,13 @@ class RadarView(QGraphicsView):
         if event.button() == Qt.MouseButton.LeftButton and getattr(self, '_is_panning', False):
             self._is_panning = False
             return
-        elif event.button() == Qt.MouseButton.RightButton and getattr(self, '_is_ruler', False):
-            self._is_ruler = False
-            self.ruler_line.hide()
-            self.ruler_text.hide()
-            return
+        elif event.button() == Qt.MouseButton.RightButton:
+            self._ruler_press_pos = None
+            if getattr(self, '_is_ruler', False):
+                self._is_ruler = False
+                self.ruler_line.hide()
+                self.ruler_text.hide()
+                return
         super().mouseReleaseEvent(event)
         
     def mouseDoubleClickEvent(self, event):
@@ -1820,39 +1995,121 @@ class RadarView(QGraphicsView):
             from PyQt6.QtWidgets import QMenu
             menu = QMenu(self)
             menu.setStyleSheet("""
-                QMenu { background-color: #1a2b26; color: #e0e0e0; border: 1px solid #336666; font-family: Consolas; font-weight: bold; }
-                QMenu::item:selected { background-color: #2a453d; color: #55ff55; }
+                QMenu {
+                    background-color: #121e1a;
+                    color: #d0e0d8;
+                    border: 1px solid #2e5548;
+                    font-family: Consolas, monospace;
+                    font-size: 11px;
+                    padding: 2px;
+                }
+                QMenu::item {
+                    padding: 4px 16px 4px 8px;
+                }
+                QMenu::item:selected {
+                    background-color: #244238;
+                    color: #55ff99;
+                }
+                QMenu::separator {
+                    height: 1px;
+                    background: #2e5548;
+                    margin: 3px 0px;
+                }
             """)
             
-            act_fnd = menu.addAction("[F] Declare FRIENDLY")
-            act_unk = menu.addAction("[U] Declare UNKNOWN")
-            act_bnd = menu.addAction("[B] Declare BANDIT")
-            act_hst = menu.addAction("[H] Declare HOSTILE")
+            act_fnd = menu.addAction("[F] FRIENDLY")
+            act_unk = menu.addAction("[U] UNKNOWN")
+            act_bnd = menu.addAction("[B] BANDIT")
+            act_hst = menu.addAction("[H] HOSTILE")
             menu.addSeparator()
             
             is_checked = target_name in self.checked_in_tracks
-            act_check = menu.addAction("Check Out (Unmark)" if is_checked else "Check In (Mark)")
+            act_check = menu.addAction("[C] UNMARK" if is_checked else "[C] MARK (CHECK-IN)")
+            act_vec = menu.addAction("[V] VECTOR AI...")
+            act_attack = menu.addAction("[A] ATTACK TARGET...")
+            
+            menu_roe = menu.addMenu("ROE CONTROL")
+            act_roe_des = menu_roe.addAction("DESIGNATED TARGET")
+            act_roe_free = menu_roe.addAction("WEAPONS FREE")
+            act_roe_hold = menu_roe.addAction("WEAPONS HOLD")
+            act_roe_ret = menu_roe.addAction("RETURN FIRE")
             
             action = menu.exec(event.globalPos())
+            grp_name = self.track_items.get(target_name, {}).get('group_name') or target_name
+            
+            track_item_info = self.track_items.get(target_name, {})
+            is_hostile_track = track_item_info.get('is_hostile', False)
+            is_friendly = not is_hostile_track
+            
+            targets_to_declare = list(self.ordered_selection) if (target_name in self.ordered_selection and len(self.ordered_selection) > 0) else [target_name]
+            
             if action == act_fnd:
-                self.set_track_classification(target_name, "FRIENDLY")
+                for t_name in targets_to_declare:
+                    self.set_track_classification(t_name, "FRIENDLY")
             elif action == act_unk:
-                self.set_track_classification(target_name, "UNKNOWN")
+                for t_name in targets_to_declare:
+                    self.set_track_classification(t_name, "UNKNOWN")
             elif action == act_bnd:
-                self.set_track_classification(target_name, "BANDIT")
+                for t_name in targets_to_declare:
+                    self.set_track_classification(t_name, "BANDIT")
             elif action == act_hst:
-                self.set_track_classification(target_name, "HOSTILE")
+                for t_name in targets_to_declare:
+                    self.set_track_classification(t_name, "HOSTILE")
             elif action == act_check:
                 if is_checked:
                     self.checked_in_tracks.remove(target_name)
                 else:
                     self.checked_in_tracks.add(target_name)
                 self.update_tracks()
+            elif action == act_vec:
+                if is_friendly:
+                    self._vector_target_group = grp_name
+                    self._is_vectoring_ai = True
+                    self.setCursor(Qt.CursorShape.CrossCursor)
+                    self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+                    if hasattr(self, 'main_window'):
+                        self.main_window.statusBar().showMessage(f"VECTORING '{grp_name}': Click map destination.")
+                else:
+                    if hasattr(self, 'main_window'):
+                        self.main_window.statusBar().showMessage(f"COMMAND REFUSED: Cannot vector non-friendly track '{target_name}'.")
+            elif action == act_attack:
+                if is_friendly:
+                    self._attack_attacker_group = grp_name
+                    self._is_selecting_attack_target = True
+                    self.setCursor(Qt.CursorShape.CrossCursor)
+                    self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+                    if hasattr(self, 'main_window'):
+                        self.main_window.statusBar().showMessage(f"ATTACK ORDER [{grp_name}]: Click target track to engage.")
+                else:
+                    if hasattr(self, 'main_window'):
+                        self.main_window.statusBar().showMessage(f"COMMAND REFUSED: Cannot order non-friendly track '{target_name}' to attack.")
+            elif action == act_roe_des:
+                if is_friendly:
+                    self.backend.send_command({"action": "set_roe", "group_name": grp_name, "roe_mode": "DESIGNATED_TARGET"})
+                    if hasattr(self, 'main_window'): self.main_window.statusBar().showMessage(f"ROE [{grp_name}]: DESIGNATED TARGET.")
+                else:
+                    if hasattr(self, 'main_window'): self.main_window.statusBar().showMessage(f"COMMAND REFUSED: Cannot set ROE on non-friendly track '{target_name}'.")
+            elif action == act_roe_free:
+                if is_friendly:
+                    self.backend.send_command({"action": "set_roe", "group_name": grp_name, "roe_mode": "WEAPON_FREE"})
+                    if hasattr(self, 'main_window'): self.main_window.statusBar().showMessage(f"ROE [{grp_name}]: WEAPONS FREE.")
+                else:
+                    if hasattr(self, 'main_window'): self.main_window.statusBar().showMessage(f"COMMAND REFUSED: Cannot set ROE on non-friendly track '{target_name}'.")
+            elif action == act_roe_hold:
+                if is_friendly:
+                    self.backend.send_command({"action": "set_roe", "group_name": grp_name, "roe_mode": "WEAPON_HOLD"})
+                    if hasattr(self, 'main_window'): self.main_window.statusBar().showMessage(f"ROE [{grp_name}]: WEAPONS HOLD.")
+                else:
+                    if hasattr(self, 'main_window'): self.main_window.statusBar().showMessage(f"COMMAND REFUSED: Cannot set ROE on non-friendly track '{target_name}'.")
+            elif action == act_roe_ret:
+                if is_friendly:
+                    self.backend.send_command({"action": "set_roe", "group_name": grp_name, "roe_mode": "RETURN_FIRE"})
+                    if hasattr(self, 'main_window'): self.main_window.statusBar().showMessage(f"ROE [{grp_name}]: RETURN FIRE.")
+                else:
+                    if hasattr(self, 'main_window'): self.main_window.statusBar().showMessage(f"COMMAND REFUSED: Cannot set ROE on non-friendly track '{target_name}'.")
                 
             if hasattr(self, 'status_panel') and self.status_panel.isVisible():
                 self.refresh_status_panel()
-        else:
-            super().contextMenuEvent(event)
 
     def toggle_threat_rings(self):
         self.show_threat_rings = not self.show_threat_rings
@@ -2318,10 +2575,11 @@ class RadarView(QGraphicsView):
             
             self.track_items[name] = {
                 'icon': icon, 'line': line, 'text': text, 'class_text': class_text, 
-                'history_dots': [], 'is_hostile': is_hostile,
+                'history_dots': [], 'is_hostile': is_hostile, 'group_name': data.get('group_name') or name,
                 'last_html': '', 'last_prefix': ''
             }
         items = self.track_items[name]
+        items['group_name'] = data.get('group_name') or name
         
         if 'class_text' not in items:
             class_text = self.scene.addText("")

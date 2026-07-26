@@ -146,6 +146,19 @@ class GCIBackend:
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1.0)
 
+    def send_command(self, cmd_dict):
+        """傳送控制指令至 DCS Lua Exporter (UDP 10089 端口)"""
+        try:
+            cmd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            payload = json.dumps(cmd_dict).encode('utf-8')
+            target_ip = self.host if hasattr(self, 'host') and self.host else "127.0.0.1"
+            cmd_sock.sendto(payload, (target_ip, 10089))
+            cmd_sock.close()
+            return True
+        except Exception as e:
+            print(f"[Backend] Failed to send command to DCS: {e}")
+            return False
+
     def _listen_loop(self):
         if self.protocol == "udp":
             self._listen_udp()

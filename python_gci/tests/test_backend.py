@@ -169,3 +169,8 @@ def test_dual_coalition_parsing():
     assert tracks_red["friendlies"][0]["unit_name"] == "RedFighter_1"
     assert len(tracks_red["hostiles"]) == 1
     assert tracks_red["hostiles"][0]["unit_name"] == "BlueTarget_1"
+
+def test_backend_send_command():
+    backend = GCIBackend(port=0, stagger_updates=False)
+    res = backend.send_command({"action": "vector", "group_name": "TestGroup", "x": 100, "z": 200})
+    assert res is True

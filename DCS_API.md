@@ -82,6 +82,7 @@ backend = GCIBackend(host='0.0.0.0', port=10088, coalition='blue')
 backend.set_coalition('red') # 動態切換為紅軍視角 ('blue' / 'red')
 backend.start()
 backend.get_tracks() -> dict  # 回傳 {'friendlies': [], 'hostiles': []}
+backend.send_command(cmd_dict) -> bool # 傳送控制指令 (vector / spawn) 至 DCS (UDP 10089)
 backend.stop()
 ```
 
