@@ -69,3 +69,20 @@ def test_get_sam_threat_range_nm():
     assert get_sam_threat_range_nm("B-1B") is None
     assert get_sam_threat_range_nm("") is None
     assert get_sam_threat_range_nm(None) is None
+
+def test_calculate_closure_rate():
+    from geometry import calculate_closure_rate
+    # Friendly flying North (+x) at 200 m/s (~388 kts)
+    f = {'x': 0, 'z': 0, 'y': 3000, 'vx': 200, 'vz': 0}
+    # Hostile 10km North flying South (-x) at 200 m/s (~388 kts) -> Head on
+    h = {'x': 10000, 'z': 0, 'y': 3000, 'vx': -200, 'vz': 0}
+    
+    vc_kts, dist_nm = calculate_closure_rate(f, h)
+    assert 5.0 <= dist_nm <= 5.5
+    # Total closing speed: 400 m/s ~ 777 kts
+    assert 770 <= vc_kts <= 785
+    
+    # Hostile flying away (+x) at 200 m/s -> Vc should be <= 0
+    h_away = {'x': 10000, 'z': 0, 'y': 3000, 'vx': 200, 'vz': 0}
+    vc_away, _ = calculate_closure_rate(f, h_away)
+    assert vc_away <= 0

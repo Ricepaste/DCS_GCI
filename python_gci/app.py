@@ -15,7 +15,7 @@ def log_global_exception(exc_type, exc_value, exc_tb):
 
 sys.excepthook = log_global_exception
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QDialog, QFormLayout, QTextEdit, QButtonGroup, QLineEdit, QInputDialog, QListWidget, QMessageBox, QGraphicsTextItem, QTabWidget, QDialogButtonBox, QComboBox
+from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QDialog, QFormLayout, QTextEdit, QButtonGroup, QLineEdit, QInputDialog, QListWidget, QMessageBox, QGraphicsTextItem, QTabWidget, QDialogButtonBox, QComboBox, QScrollArea, QGridLayout
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QPixmap, QImage, QTransform, QCursor, QIcon
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, QLineF, QSize
 from backend import GCIBackend
@@ -1031,6 +1031,10 @@ class RadarView(QGraphicsView):
         self.show_threat_rings = True
         self.threat_ring_items = {}
         self.threat_text_items = {}
+        self.show_conflict_alerts = True
+        self.conflict_items = {}  # (friendly_name, hostile_name) -> {'line': QGraphicsLineItem, 'text': QGraphicsTextItem}
+
+
         
         # 決定當前要讀取的地圖資料目錄
         base_dir = get_base_dir()
@@ -1831,6 +1835,33 @@ class RadarView(QGraphicsView):
         else:
             super().contextMenuEvent(event)
 
+    def toggle_threat_rings(self):
+        self.show_threat_rings = not self.show_threat_rings
+        for ellipse in self.threat_ring_items.values():
+            ellipse.setVisible(self.show_threat_rings)
+        if hasattr(self, 'threat_text_items'):
+            for text_item in self.threat_text_items.values():
+                text_item.setVisible(self.show_threat_rings)
+        if hasattr(self, 'custom_threat_rings'):
+            for data in self.custom_threat_rings.values():
+                if 'ring' in data and data['ring']: data['ring'].setVisible(self.show_threat_rings)
+                if 'text' in data and data['text']: data['text'].setVisible(self.show_threat_rings)
+        if hasattr(self, 'main_window'):
+            status = "Threat Rings ON" if self.show_threat_rings else "Threat Rings OFF"
+            self.main_window.statusBar().showMessage(status)
+
+    def toggle_conflict_alerts(self):
+        self.show_conflict_alerts = not self.show_conflict_alerts
+        if not self.show_conflict_alerts:
+            for pair_key, items in list(self.conflict_items.items()):
+                self.scene.removeItem(items['line'])
+                self.scene.removeItem(items['text'])
+            self.conflict_items.clear()
+        if hasattr(self, 'main_window'):
+            status = "Conflict Alerts ON" if self.show_conflict_alerts else "Conflict Alerts OFF"
+            self.main_window.statusBar().showMessage(status, 2000)
+        self.update_tracks()
+
     def keyPressEvent(self, event):
         key = event.key()
         if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
@@ -2117,7 +2148,101 @@ class RadarView(QGraphicsView):
             if hasattr(self, 'intercept_panel') and self.intercept_panel:
                 self.intercept_panel.hide()
             
+        # 自動防空與交戰衝突警報 (Conflict Alert & Closure Rate)
+        self._update_conflict_alerts(friendly_data, hostile_data)
+        
         self.refresh_status_panel()
+
+    def _update_conflict_alerts(self, friendly_data, hostile_data):
+        if not getattr(self, 'show_conflict_alerts', True):
+            return
+
+        active_conflicts = set()
+        
+        # 方案 A: 每架友機只選擇「最致命/距離最近 (且 Vc >= 300)」的一架敵機
+        for f_name, f in friendly_data.items():
+            if f.get('category') in [2, 3]:
+                continue
+            f_sx, f_sy = self.dcs_to_scene(f['x'], f['z'])
+            
+            best_hostile_name = None
+            best_dist = 999999.0
+            best_vc = 0
+            best_h_data = None
+            
+            for h_name, h in hostile_data.items():
+                if h.get('category') in [2, 3]:
+                    continue
+                
+                vc_kts, dist_nm = geometry.calculate_closure_rate(f, h)
+                if dist_nm <= 50.0 and vc_kts >= 300:
+                    if dist_nm < best_dist:
+                        best_dist = dist_nm
+                        best_vc = vc_kts
+                        best_hostile_name = h_name
+                        best_h_data = h
+                        
+            if best_hostile_name and best_h_data:
+                pair_key = (f_name, best_hostile_name)
+                active_conflicts.add(pair_key)
+                
+                h_sx, h_sy = self.dcs_to_scene(best_h_data['x'], best_h_data['z'])
+                
+                # 顏色區分：20 NM 內 (BVR 飛彈威脅區) 為亮橘紅色；20-50 NM 為亮黃色
+                if best_dist <= 20.0:
+                    line_color = QColor(255, 140, 0, 240) # 亮橘紅
+                    pen_width = 2.5
+                else:
+                    line_color = QColor(240, 220, 60, 200) # 亮黃
+                    pen_width = 2.0
+                    
+                pen = QPen(line_color, pen_width, Qt.PenStyle.DashLine)
+                pen.setCosmetic(True)
+                
+                if pair_key not in self.conflict_items:
+                    line_item = self.scene.addLine(0, 0, 0, 0, pen)
+                    line_item.setZValue(12)
+                    
+                    text_item = self.scene.addText("")
+                    text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+                    text_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+                    text_item.setZValue(13)
+                    
+                    self.conflict_items[pair_key] = {
+                        'line': line_item,
+                        'text': text_item,
+                        'last_vc': -1
+                    }
+                
+                c_data = self.conflict_items[pair_key]
+                c_data['line'].setPen(pen)
+                c_data['line'].setLine(f_sx, f_sy, h_sx, h_sy)
+                c_data['line'].show()
+                
+                # 中點顯示接近率 (Vc [速度]KTS)
+                mid_x = (f_sx + h_sx) / 2.0
+                mid_y = (f_sy + h_sy) / 2.0
+                c_data['text'].setPos(mid_x, mid_y)
+                c_data['text'].setTransform(QTransform().translate(-15, -10))
+                
+                if c_data['last_vc'] != best_vc:
+                    fs = int(9 * self.font_scale)
+                    c_hex = line_color.name()
+                    html = f'<span style="font-family:Consolas;font-size:{fs}pt;color:{c_hex};font-weight:bold;">Vc {best_vc}K</span>'
+                    c_data['text'].setHtml(html)
+                    c_data['last_vc'] = best_vc
+                c_data['text'].show()
+
+        # 清除不再符合衝突條件的連線
+        to_remove = []
+        for pair_key, items in self.conflict_items.items():
+            if pair_key not in active_conflicts:
+                self.scene.removeItem(items['line'])
+                self.scene.removeItem(items['text'])
+                to_remove.append(pair_key)
+                
+        for pair_key in to_remove:
+            del self.conflict_items[pair_key]
 
     def _create_icon_for_prefix(self, prefix, color):
         size = 6
@@ -2392,11 +2517,12 @@ class RadarView(QGraphicsView):
 def create_sidebar_icon(shape_type):
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(180, 255, 180, 255))
-    pen.setWidth(2)
-    painter.setPen(pen)
+    painter = QPainter()
+    if painter.begin(pixmap):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(180, 255, 180, 255))
+        pen.setWidth(2)
+        painter.setPen(pen)
     
     if shape_type == "mark":
         painter.drawEllipse(6, 6, 20, 20)
@@ -2441,9 +2567,60 @@ def create_sidebar_icon(shape_type):
         # Draw a two-shield or two-flag icon
         painter.drawRect(4, 6, 10, 20)
         painter.drawRect(18, 6, 10, 20)
+    elif shape_type == "conflict":
+        painter.drawLine(4, 4, 28, 28)
+        painter.drawLine(4, 28, 28, 4)
+        painter.drawEllipse(11, 11, 10, 10)
     
-    painter.end()
+    if painter.isActive():
+        painter.end()
     return QIcon(pixmap)
+
+def create_sidebar_button(shape_type, label_text, tooltip):
+    btn = QPushButton(label_text)
+    btn.setIcon(create_sidebar_icon(shape_type))
+    btn.setToolTip(tooltip)
+    btn.setFixedSize(86, 55)
+    btn.setProperty("shape_type", shape_type)
+    btn.setStyleSheet("""
+        QPushButton {
+            background-color: #162420;
+            border: 1px solid #2a4035;
+            border-radius: 4px;
+            color: #b4ffb4;
+            font-family: Consolas;
+            font-size: 11px;
+            font-weight: bold;
+            text-align: center;
+            padding-top: 2px;
+        }
+        QPushButton:hover {
+            background-color: #2a4035;
+            border: 1px solid #b4ffb4;
+            color: #ffffff;
+        }
+        QPushButton:pressed {
+            background-color: #b4ffb4;
+            color: #000000;
+        }
+    """)
+    return btn
+
+def create_sidebar_group_label(title):
+    lbl = QLabel(title)
+    lbl.setStyleSheet("""
+        QLabel {
+            color: #558877;
+            font-family: Consolas;
+            font-size: 11px;
+            font-weight: bold;
+            padding-top: 4px;
+            padding-bottom: 2px;
+            border-bottom: 1px solid #2a4035;
+        }
+    """)
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    return lbl
 
 class GCIMainWindow(QMainWindow):
     def __init__(self, backend):
@@ -2451,7 +2628,7 @@ class GCIMainWindow(QMainWindow):
         self.backend = backend
         c_name = getattr(self.backend, 'coalition', 'blue').upper()
         self.setWindowTitle(f"DCS External GCI (LotATC Lite) - [{c_name} COALITION]")
-        self.resize(1200, 800)
+        self.resize(1240, 850)
         
         main_widget = QWidget()
         layout = QHBoxLayout(main_widget)
@@ -2464,103 +2641,109 @@ class GCIMainWindow(QMainWindow):
         
         layout.addWidget(self.radar, stretch=1)
         
-        # 控制面板 (窄邊條)
-        sidebar = QVBoxLayout()
-        sidebar.setContentsMargins(8, 8, 8, 8)
-        sidebar.setSpacing(12)
-        
-        button_style = """
-            QPushButton {
-                background-color: #162420;
-                border: 1px solid #2a4035;
-                border-radius: 4px;
+        # 建立可滾動的側邊欄容器 (QScrollArea Wrapper)，防止縮放或低解析度下重疊
+        sidebar_scroll = QScrollArea()
+        sidebar_scroll.setWidgetResizable(True)
+        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sidebar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        sidebar_scroll.setStyleSheet("""
+            QScrollArea {
+                background-color: #0d1714;
+                border: none;
+                border-left: 1px solid #2a4035;
             }
-            QPushButton:hover {
+            QScrollBar:vertical {
+                background-color: #0d1714;
+                width: 6px;
+                border: none;
+            }
+            QScrollBar::handle:vertical {
                 background-color: #2a4035;
-                border: 1px solid #b4ffb4;
+                border-radius: 3px;
             }
-            QPushButton:pressed {
+            QScrollBar::handle:vertical:hover {
                 background-color: #b4ffb4;
             }
-        """
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+
+        sidebar_widget = QWidget()
+        sidebar_widget.setStyleSheet("background-color: #0d1714;")
+        sidebar_layout = QVBoxLayout(sidebar_widget)
+        sidebar_layout.setContentsMargins(6, 6, 6, 6)
+        sidebar_layout.setSpacing(6)
         
-        self.btn_mark = QPushButton()
-        self.btn_mark.setIcon(create_sidebar_icon("mark"))
-        self.btn_mark.setToolTip("標記友軍 (Toggle Control) - 點擊友軍後按此按鈕以標記接管狀態")
-        self.btn_mark.setFixedSize(45, 45)
-        self.btn_mark.setStyleSheet(button_style)
-        self.btn_mark.clicked.connect(self.radar.toggle_selected_friendly)
+        # --- 1. DISPLAY (地圖圖層顯示開關) ---
+        sidebar_layout.addWidget(create_sidebar_group_label("DISPLAY"))
+        grid_display = QGridLayout()
+        grid_display.setSpacing(4)
         
-        self.btn_toggle_airbases = QPushButton()
-        self.btn_toggle_airbases.setIcon(create_sidebar_icon("airbase"))
-        self.btn_toggle_airbases.setToolTip("顯示/隱藏機場與跑道 (Declutter)")
-        self.btn_toggle_airbases.setFixedSize(45, 45)
-        self.btn_toggle_airbases.setStyleSheet(button_style)
+        self.btn_toggle_airbases = create_sidebar_button("airbase", "BASE", "顯示/隱藏機場與跑道 (Declutter)")
         self.btn_toggle_airbases.clicked.connect(self.radar.toggle_airbases)
         
-        self.btn_toggle_threats = QPushButton()
-        self.btn_toggle_threats.setIcon(create_sidebar_icon("threat"))
-        self.btn_toggle_threats.setToolTip("顯示/隱藏 SAM 導彈威脅圈 (Threat Rings) [快捷鍵 T]")
-        self.btn_toggle_threats.setFixedSize(45, 45)
-        self.btn_toggle_threats.setStyleSheet(button_style)
-        self.btn_toggle_threats.clicked.connect(self.radar.toggle_threat_rings)
-        
-        self.btn_toggle_coalition = QPushButton()
-        self.btn_toggle_coalition.setIcon(create_sidebar_icon("coalition"))
-        self.btn_toggle_coalition.setToolTip("切換 GCI 觀看陣營 (BLUE / RED)")
-        self.btn_toggle_coalition.setFixedSize(45, 45)
-        self.btn_toggle_coalition.setStyleSheet(button_style)
-        self.btn_toggle_coalition.clicked.connect(self.toggle_gci_coalition)
-        
-        self.btn_toggle_labels = QPushButton()
-        self.btn_toggle_labels.setIcon(create_sidebar_icon("label"))
-        self.btn_toggle_labels.setToolTip("字卡模式循環: MINIMAL (僅TN) → FULL (全展開) → NONE (無字卡) → MINIMAL")
-        self.btn_toggle_labels.setFixedSize(45, 45)
-        self.btn_toggle_labels.setStyleSheet(button_style)
+        self.btn_toggle_labels = create_sidebar_button("label", "LABEL", "字卡模式循環: MINIMAL (僅TN) → FULL (全展開) → NONE (無字卡) → MINIMAL")
         self.btn_toggle_labels.clicked.connect(self.radar.toggle_all_labels)
         
-        self.btn_set_bullseye = QPushButton()
-        self.btn_set_bullseye.setIcon(create_sidebar_icon("bullseye"))
-        self.btn_set_bullseye.setToolTip("自定義靶眼位置 (Bullseye)")
-        self.btn_set_bullseye.setFixedSize(45, 45)
-        self.btn_set_bullseye.setStyleSheet(button_style)
-        self.btn_set_bullseye.clicked.connect(self.toggle_set_bullseye)
+        self.btn_toggle_threats = create_sidebar_button("threat", "SAM", "顯示/隱藏 SAM 導彈威脅圈 (Threat Rings) [快捷鍵 T]")
+        self.btn_toggle_threats.clicked.connect(self.radar.toggle_threat_rings)
         
-        self.btn_draw_airspace = QPushButton()
-        self.btn_draw_airspace.setIcon(create_sidebar_icon("airspace"))
-        self.btn_draw_airspace.setToolTip("手繪空域 (ROZ/CAP)")
-        self.btn_draw_airspace.setFixedSize(45, 45)
-        self.btn_draw_airspace.setStyleSheet(button_style)
+        self.btn_toggle_conflicts = create_sidebar_button("conflict", "VC ALERT", "顯示/隱藏 交戰衝突接近率連線 (Conflict Alert) [快捷鍵 C]")
+        self.btn_toggle_conflicts.clicked.connect(self.radar.toggle_conflict_alerts)
+        
+        grid_display.addWidget(self.btn_toggle_airbases, 0, 0)
+        grid_display.addWidget(self.btn_toggle_labels, 0, 1)
+        grid_display.addWidget(self.btn_toggle_threats, 1, 0)
+        grid_display.addWidget(self.btn_toggle_conflicts, 1, 1)
+        sidebar_layout.addLayout(grid_display)
+        
+        # --- 2. TOOLS (戰術繪製與地圖測量工具) ---
+        sidebar_layout.addWidget(create_sidebar_group_label("TOOLS"))
+        grid_tools = QGridLayout()
+        grid_tools.setSpacing(4)
+        
+        self.btn_draw_airspace = create_sidebar_button("airspace", "ZONE", "手繪劃定戰術空域 (ROZ/CAP)")
         self.btn_draw_airspace.clicked.connect(self.toggle_draw_airspace)
 
-        self.btn_manage_airspace = QPushButton()
-        self.btn_manage_airspace.setIcon(create_sidebar_icon("manager"))
-        self.btn_manage_airspace.setToolTip("管理與刪除空域")
-        self.btn_manage_airspace.setFixedSize(45, 45)
-        self.btn_manage_airspace.setStyleSheet(button_style)
-        self.btn_manage_airspace.clicked.connect(self.open_airspace_manager)
-        
-        self.btn_draw_custom_threat = QPushButton()
-        self.btn_draw_custom_threat.setIcon(create_sidebar_icon("threat_custom"))
-        self.btn_draw_custom_threat.setToolTip("手繪威脅圈 (Custom Threat Ring)")
-        self.btn_draw_custom_threat.setFixedSize(45, 45)
-        self.btn_draw_custom_threat.setStyleSheet(button_style)
+        self.btn_draw_custom_threat = create_sidebar_button("threat_custom", "R-RING", "手繪威脅圈 (Custom Threat Ring)")
         self.btn_draw_custom_threat.clicked.connect(self.radar.toggle_draw_custom_threat_circle)
 
-        self.btn_add_marker = QPushButton()
-        self.btn_add_marker.setIcon(create_sidebar_icon("pin"))
-        self.btn_add_marker.setToolTip("放置戰術地標標記 (TacPen Marker)")
-        self.btn_add_marker.setFixedSize(45, 45)
-        self.btn_add_marker.setStyleSheet(button_style)
+        self.btn_add_marker = create_sidebar_button("pin", "TAC PIN", "放置戰術地標標記 (TacPen Marker)")
         self.btn_add_marker.clicked.connect(self.radar.toggle_add_tactical_marker)
+
+        self.btn_set_bullseye = create_sidebar_button("bullseye", "BULLS", "自定義靶眼位置 (Bullseye)")
+        self.btn_set_bullseye.clicked.connect(self.toggle_set_bullseye)
+
+        grid_tools.addWidget(self.btn_draw_airspace, 0, 0)
+        grid_tools.addWidget(self.btn_draw_custom_threat, 0, 1)
+        grid_tools.addWidget(self.btn_add_marker, 1, 0)
+        grid_tools.addWidget(self.btn_set_bullseye, 1, 1)
+        sidebar_layout.addLayout(grid_tools)
+
+        # --- 3. CONTROL (戰管控制與系統管理) ---
+        sidebar_layout.addWidget(create_sidebar_group_label("CONTROL"))
+        grid_control = QGridLayout()
+        grid_control.setSpacing(4)
+        
+        self.btn_mark = create_sidebar_button("mark", "CHECK", "標記友軍 (Toggle Control) - 點擊友軍後按此按鈕標記接管")
+        self.btn_mark.clicked.connect(self.radar.toggle_selected_friendly)
+
+        self.btn_toggle_coalition = create_sidebar_button("coalition", "SIDE", "切換 GCI 觀看陣營 (BLUE / RED)")
+        self.btn_toggle_coalition.clicked.connect(self.toggle_gci_coalition)
+
+        self.btn_manage_airspace = create_sidebar_button("manager", "MANAGE", "管理與刪除空域 / 導出導入 JSON")
+        self.btn_manage_airspace.clicked.connect(self.open_airspace_manager)
 
         self.font_combo = QComboBox()
         self.font_combo.addItems(["100%", "110%", "120%", "130%", "150%", "175%"])
-        self.font_combo.setToolTip("調整字體大小 (適配大螢幕/4K)")
-        self.font_combo.setFixedSize(52, 28)
+        self.font_combo.setToolTip("調整 UI 與字體縮放比例 (適配大螢幕/4K)")
+        self.font_combo.setFixedSize(68, 44)
         self.font_combo.setStyleSheet("""
             QComboBox {
-                background-color: #162420; color: #b4ffb4; border: 1px solid #2a4035; font-family: Consolas; font-weight: bold; border-radius: 3px; font-size: 10px;
+                background-color: #162420; color: #b4ffb4; border: 1px solid #2a4035;
+                font-family: Consolas; font-weight: bold; border-radius: 4px; font-size: 10px;
+                padding-left: 6px;
             }
             QComboBox QAbstractItemView {
                 background-color: #162420; color: #b4ffb4; selection-background-color: #2a4035;
@@ -2568,20 +2751,21 @@ class GCIMainWindow(QMainWindow):
         """)
         self.font_combo.currentIndexChanged.connect(self.on_font_scale_changed)
 
-        sidebar.addWidget(self.btn_mark)
-        sidebar.addWidget(self.btn_toggle_airbases)
-        sidebar.addWidget(self.btn_toggle_threats)
-        sidebar.addWidget(self.btn_draw_custom_threat)
-        sidebar.addWidget(self.btn_add_marker)
-        sidebar.addWidget(self.btn_toggle_coalition)
-        sidebar.addWidget(self.btn_toggle_labels)
-        sidebar.addWidget(self.btn_set_bullseye)
-        sidebar.addWidget(self.btn_draw_airspace)
-        sidebar.addWidget(self.btn_manage_airspace)
-        sidebar.addWidget(self.font_combo)
-        sidebar.addStretch()
-        layout.addLayout(sidebar)
+        grid_control.addWidget(self.btn_mark, 0, 0)
+        grid_control.addWidget(self.btn_toggle_coalition, 0, 1)
+        grid_control.addWidget(self.btn_manage_airspace, 1, 0)
+        grid_control.addWidget(self.font_combo, 1, 1)
+        sidebar_layout.addLayout(grid_control)
+
+        sidebar_layout.addStretch()
+        sidebar_scroll.setWidget(sidebar_widget)
+        self.sidebar_scroll = sidebar_scroll
+        
+        layout.addWidget(sidebar_scroll)
         self.setCentralWidget(main_widget)
+        
+        # 顯式進行一次初始 UI 縮放同步，確保啟動時按鈕、圖示與 ComboBox 尺寸 100% 完美貼合
+        self.apply_ui_scale(1.0)
 
     def on_font_scale_changed(self, index):
         scales = [1.0, 1.1, 1.2, 1.3, 1.5, 1.75]
@@ -2591,11 +2775,17 @@ class GCIMainWindow(QMainWindow):
     def apply_ui_scale(self, scale):
         """全局 UI 縮放: 套用至 QApplication 字體、邊欄按鈕、HUD 面板與 Canvas 項目"""
         self._ui_scale = scale
-        btn_size = int(45 * scale)
-        combo_h = int(28 * scale)
-        combo_w = int(56 * scale)
+        btn_w = int(86 * scale)
+        btn_h = int(55 * scale)
+        combo_h = int(55 * scale)
+        combo_w = int(86 * scale)
+        scroll_w = int(200 * scale)
         base_font_pt = int(10 * scale)
+        btn_font_pt = int(11 * scale)
         icon_size = int(24 * scale)
+
+        if hasattr(self, 'sidebar_scroll') and self.sidebar_scroll:
+            self.sidebar_scroll.setFixedWidth(scroll_w)
 
         # 1. 設定 QApplication 全域字體 — 自動影響所有 QWidget (QLabel, QPushButton, QMenu, QStatusBar…)
         from PyQt6.QtWidgets import QApplication
@@ -2604,22 +2794,45 @@ class GCIMainWindow(QMainWindow):
 
         # 2. 重設邊欄按鈕尺寸與 Icon 尺寸
         sidebar_buttons = [
-            self.btn_mark, self.btn_toggle_airbases, self.btn_toggle_threats,
+            self.btn_mark, self.btn_toggle_airbases, self.btn_toggle_threats, self.btn_toggle_conflicts,
             self.btn_draw_custom_threat, self.btn_add_marker, self.btn_toggle_coalition,
             self.btn_toggle_labels, self.btn_set_bullseye, self.btn_draw_airspace,
             self.btn_manage_airspace,
         ]
         for btn in sidebar_buttons:
-            btn.setFixedSize(btn_size, btn_size)
+            btn.setFixedSize(btn_w, btn_h)
             btn.setIconSize(QSize(icon_size, icon_size))
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: #162420;
+                    border: 1px solid #2a4035;
+                    border-radius: 4px;
+                    color: #b4ffb4;
+                    font-family: Consolas;
+                    font-size: {btn_font_pt}px;
+                    font-weight: bold;
+                    text-align: center;
+                    padding-top: 2px;
+                }}
+                QPushButton:hover {{
+                    background-color: #2a4035;
+                    border: 1px solid #b4ffb4;
+                    color: #ffffff;
+                }}
+                QPushButton:pressed {{
+                    background-color: #b4ffb4;
+                    color: #000000;
+                }}
+            """)
 
         # 3. 重設縮放選單尺寸
         self.font_combo.setFixedSize(combo_w, combo_h)
         self.font_combo.setStyleSheet(f"""
             QComboBox {{
                 background-color: #162420; color: #b4ffb4; border: 1px solid #2a4035;
-                font-family: Consolas; font-weight: bold; border-radius: 3px;
+                font-family: Consolas; font-weight: bold; border-radius: 4px;
                 font-size: {base_font_pt}px;
+                padding-left: 6px;
             }}
             QComboBox QAbstractItemView {{
                 background-color: #162420; color: #b4ffb4; selection-background-color: #2a4035;
