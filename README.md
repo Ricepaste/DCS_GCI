@@ -83,7 +83,7 @@
   * 實裝 **輕量級 AI 引導航點與動態單位生成 (AI Vectoring & Preset Spawning)**：
     * **飛行指定點 (`[V] Direct AI Vector`)**：右鍵點擊任何 AI 航跡並選取目標位置，雷達直接透過 UDP 10089 端口發送 `GoToWaypoint` 任務指令，引導 AI 轉向飛往指定座標點。
     * **預設單位生成 (`[S] Spawn Preset Unit`)**：在地圖空白處右鍵即可選擇生成藍/紅軍預設 CAP (F-16C / Su-27)、CAS (A-10C / Su-25T) 與直升機單位 (AH-64D / Ka-50)，完全相容 DCS 原生 Lua API `coalition.addGroup` 且維持 100% 程式輕量。
-  * 支援 **PyInstaller 自動打包 (`build.ps1`)** 與 **GitHub Actions 自動 Release CI/CD**（包含 `-beta` / `-alpha` / `-rc` 的 Tag 會自動標記為 **Pre-release** 預覽版本）。
+  * 重構 **Python GCI GUI 代碼架構 (Modular UI Refactoring)**：將原本 3,290 多行的單一 `app.py` 成功解耦並拆分為 `python_gci/ui/` 模組化結構 (`radar_view.py`, `main_window.py`, `context_menu.py`, `panels.py`)；保持 100% 向後相容性，大幅提升維護性、測試獨立性與 LLM 開發效率。
 
 ## 📡 DCS 外部戰場監控系統 (External GCI)
 

@@ -403,16 +403,21 @@ local function process_incoming_commands()
                         -- 強制彈出/取消當前的 Attack Task
                         pcall(function() controller:popTask() end)
                         
-                        -- 1. 獲取高度與速度
-                        local current_alt = 6000
-                        local current_speed = 250
+                        -- 1. 獲取高度與速度 (優先使用 cmd 傳入的目標高度/速度)
+                        local target_alt = tonumber(cmd.alt)
+                        local target_speed = tonumber(cmd.speed)
+                        
                         local u1 = grp:getUnit(1)
-                        if u1 and u1:isExist() then
-                            local p = u1:getPoint()
-                            local v = u1:getVelocity()
-                            if p and p.y then current_alt = p.y end
-                            if v then current_speed = math.max(150, math.floor(math.sqrt((v.x or 0)*(v.x or 0) + (v.z or 0)*(v.z or 0)))) end
+                        if not target_alt or not target_speed then
+                            if u1 and u1:isExist() then
+                                local p = u1:getPoint()
+                                local v = u1:getVelocity()
+                                if not target_alt and p and p.y then target_alt = p.y end
+                                if not target_speed and v then target_speed = math.max(150, math.floor(math.sqrt((v.x or 0)*(v.x or 0) + (v.z or 0)*(v.z or 0)))) end
+                            end
                         end
+                        target_alt = target_alt or 6000
+                        target_speed = target_speed or 250
                         
                         -- 2. 直接呼叫 controller:setTask() 重新設置航線點 (最乾淨、最可靠且能完全中斷舊任務)
                         local cur_x, cur_z = cmd.x, cmd.z
@@ -426,8 +431,8 @@ local function process_incoming_commands()
                             params = {
                                 route = {
                                     points = {
-                                        [1] = { x = cur_x, y = cur_z, alt = current_alt, speed = current_speed, action = 'Turning Point', type = 'Turning Point' },
-                                        [2] = { x = cmd.x, y = cmd.z, alt = current_alt, speed = current_speed, action = 'Turning Point', type = 'Turning Point' }
+                                        [1] = { x = cur_x, y = cur_z, alt = target_alt, speed = target_speed, action = 'Turning Point', type = 'Turning Point' },
+                                        [2] = { x = cmd.x, y = cmd.z, alt = target_alt, speed = target_speed, action = 'Turning Point', type = 'Turning Point' }
                                     }
                                 }
                             }
@@ -435,7 +440,7 @@ local function process_incoming_commands()
                         pcall(function() controller:setTask(mission_task) end)
                         
                         if env and env.info then
-                            env.info(string.format("[GCI Command] Group %s vectored to X:%.1f, Z:%.1f", cmd.group_name, cmd.x, cmd.z))
+                            env.info(string.format("[GCI Command] Group %s vectored to X:%.1f, Z:%.1f, Alt:%.0fm, Speed:%.0fm/s", cmd.group_name, cmd.x, cmd.z, target_alt, target_speed))
                         end
                     end
                 end
