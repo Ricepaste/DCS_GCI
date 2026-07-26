@@ -1166,6 +1166,25 @@ class RadarView(QGraphicsView):
         self.timer.timeout.connect(self.update_tracks)
         self.timer.start(100)
 
+        # 自動加載預設空域設定 (airspaces_config.json)
+        self.load_default_airspaces()
+
+    def load_default_airspaces(self):
+        base_dir = get_base_dir()
+        default_json_path = os.path.join(base_dir, "airspaces_config.json")
+        if os.path.exists(default_json_path):
+            import json
+            try:
+                with open(default_json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                for name, info in data.items():
+                    pts = [QPointF(p['x'], p['y']) for p in info.get('points', [])]
+                    c_hex = info.get('color', '#ff6464')
+                    if len(pts) >= 3:
+                        self.create_airspace_from_points(name, pts, QColor(c_hex))
+            except Exception as e:
+                print(f"[Airspace] Failed to auto-load default airspaces: {e}")
+
     def get_braa_panel(self):
         parent_widget = self.main_window.centralWidget() if hasattr(self, "main_window") else self
         if not hasattr(self, 'braa_panel') or not self.braa_panel:
