@@ -77,6 +77,9 @@
   * 修正 **Lua Exporter 防崩潰與中立陣營相容性 (Safe Lua Exporter & Neutral Scan)**：重構 `External_GCI_Exporter.lua` 陣營枚舉存取邏輯（安全回退至整數 `0, 1, 2`），防止特定 DCS 環境中存取未定義 `coalition.side` 觸發 Lua runtime 異常；修復 `export_telemetry_safe(time)` 的 `time` 參數在部分特定呼叫環境下為 `nil` 時嘗試進行加法運算導致的 `attempt to perform arithmetic on local 'time' (a nil value)` 崩潰異常（改為回退至 `timer.getTime()`），保障腳本 100% 穩定持續執行。
   * 修復 **啟動黑屏與地圖鏡頭對焦 (Launch Camera Auto-Centering)**：修正無空中單位時鏡頭偏移至 (0,0) 海域導致畫面黑屏的 Bug，啟動時自動精準對焦至當前地圖機場群中央。
   * 新增 **GUI 主視窗元件與 Layout 完整性單元測試 (`test_gci_main_window_initialization_and_layout`)**：自動驗證 `centralWidget` 視圖掛載、RadarView 正確綁定、所有側邊欄按鈕按鍵實體化與字體縮放事件連動，防止未預期的縮排或掛載錯誤導致畫面全黑。
+  * 實裝 **自動交戰衝突警報與接近率計算 (Conflict Alert & Closure Rate)**：當己方空中單位與敵方單位距離小於等於 50 NM 且雙方相向靠近接近率 $V_c \ge 300\text{ KTS}$ 時，自動於最危險之目標間繪製警報連線並標示接近速度；支援快捷鍵 `C` 與邊欄專屬按鈕開關。採用一機一線最高威脅篩選演算法，完全消除多機混戰時之蜘蛛網視覺擁擠。
+  * 重構 **雙欄軍規滾動側邊欄 UI (2-Column Scrollable Military Sidebar UI)**：將側邊欄按鈕按功能邏輯重構為三大直觀類別（`DISPLAY` 圖層開關、`TOOLS` 戰術與測量工具、`CONTROL` 戰管與系統維護），並採用 **2 欄矩陣 (QGridLayout)** 配合 **無縫滾動區域 (QScrollArea)** 雙層防護機制；垂直佔用高度直接減半，徹底解決大螢幕/4K 放大（100%~175%）及低解析度下按鈕擠壓重疊與溢出問題。
+  * 實裝 **預設空域資料自動載入 (Default Airspaces Auto-Load)**：雷達視圖啟動時自動掃描讀取同目錄下的 `airspaces_config.json`（包含預設地形/山脈空域劃分），無須每次手動 Import 即可在啟動後直接繪製於雷達畫面上。
   * 支援 **PyInstaller 自動打包 (`build.ps1`)** 與 **GitHub Actions 自動 Release CI/CD**（包含 `-beta` / `-alpha` / `-rc` 的 Tag 會自動標記為 **Pre-release** 預覽版本）。
 
 ## 📡 DCS 外部戰場監控系統 (External GCI)

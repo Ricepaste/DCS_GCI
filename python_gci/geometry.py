@@ -8,6 +8,33 @@ def calculate_speed(vx, vz):
     speed_m_s = math.sqrt(vx**2 + vz**2)
     return int(speed_m_s * 1.94384)
 
+def calculate_closure_rate(f, h):
+    """
+    Calculate closure rate (Vc) in knots and 2D distance in NM between two tracks f and h.
+    f, h: dicts with x, z, y, vx, vz
+    """
+    dx = h['x'] - f['x']
+    dz = h['z'] - f['z']
+    dist_m = math.hypot(dx, dz)
+    if dist_m < 1.0:
+        return 0, 0.0
+    
+    dist_nm = dist_m * 0.000539957
+    
+    # Relative velocity (m/s)
+    rel_vx = f['vx'] - h['vx']
+    rel_vz = f['vz'] - h['vz']
+    
+    # Unit vector pointing from f to h
+    ux = dx / dist_m
+    uz = dz / dist_m
+    
+    # Closure rate in m/s (positive means closing)
+    vc_m_s = rel_vx * ux + rel_vz * uz
+    vc_kts = int(vc_m_s * 1.94384)
+    
+    return vc_kts, dist_nm
+
 def to_dms(deg, is_lat):
     """Convert decimal degrees to standard DMS string format."""
     direction = "N" if is_lat and deg >= 0 else ("S" if is_lat else ("E" if deg >= 0 else "W"))
