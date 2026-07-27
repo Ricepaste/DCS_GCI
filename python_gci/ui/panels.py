@@ -493,7 +493,169 @@ class AircraftStatusPanel(QWidget):
         self.current_unit = None
         super().closeEvent(event)
 
+
+# ---------------------------------------------------------------------------
+# Generic canvas-level input dialog (no OS title bar, floats on RadarView)
+# Used for: Tactical Marker label, Custom Threat Ring radius+label
+# ---------------------------------------------------------------------------
+_CANVAS_DIALOG_SS = """
+    QWidget#container {
+        background-color: rgba(10, 20, 15, 245);
+        border: 1px solid #2e5548;
+        border-radius: 5px;
+    }
+    QLabel { color: #b4ffb4; font-family: Consolas; font-size: 11px;
+             border: none; background: transparent; }
+    QLabel#title_lbl { color: #00e6ff; font-weight: bold; font-size: 11px;
+                       border-bottom: 1px solid #2a4035; padding-bottom: 2px; }
+    QLineEdit { background-color: #162420; border: 1px solid #2a4035;
+                color: #ffffff; padding: 4px; border-radius: 3px;
+                font-family: Consolas; font-size: 11px; }
+    QDoubleSpinBox { background-color: #162420; border: 1px solid #2a4035;
+                     color: #ffffff; padding: 4px; border-radius: 3px;
+                     font-family: Consolas; font-size: 11px; }
+    QPushButton { background-color: #162420; border: 1px solid #2a4035;
+                  color: #b4ffb4; padding: 5px; border-radius: 3px;
+                  font-family: Consolas; font-weight: bold; font-size: 11px; }
+    QPushButton:hover { background-color: #2a4035; border: 1px solid #b4ffb4; }
+"""
+
+class CanvasInputDialog(QDialog):
+    """
+    Frameless QDialog that floats inside the main window (parented to it),
+    visually appearing on the canvas rather than as a detached OS window.
+
+    Modes
+    -----
+    - text-only   : show_number=False  ->  just label + QLineEdit
+    - number+text : show_number=True   ->  QDoubleSpinBox for radius, then QLineEdit for label
+    """
+
+    def __init__(self, title, prompt, default_text="",
+                 show_number=False,
+                 number_label="Value:", number_value=30.0,
+                 number_min=1.0, number_max=500.0, number_decimals=1,
+                 parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setFixedWidth(270)
+
+        self._result_text = default_text
+        self._result_number = number_value
+        self._accepted = False
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        container = QWidget()
+        container.setObjectName("container")
+        container.setStyleSheet(_CANVAS_DIALOG_SS)
+        outer.addWidget(container)
+
+        lay = QVBoxLayout(container)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(6)
+
+        title_lbl = QLabel(title)
+        title_lbl.setObjectName("title_lbl")
+        lay.addWidget(title_lbl)
+
+        if show_number:
+            from PyQt6.QtWidgets import QDoubleSpinBox
+            lay.addWidget(QLabel(number_label))
+            self.spin = QDoubleSpinBox()
+            self.spin.setRange(number_min, number_max)
+            self.spin.setDecimals(number_decimals)
+            self.spin.setValue(number_value)
+            self.spin.setStyleSheet(
+                "QDoubleSpinBox { background-color: #162420; border: 1px solid #2a4035; "
+                "color: #fff; padding: 4px; border-radius: 3px; "
+                "font-family: Consolas; font-size: 11px; }"
+            )
+            lay.addWidget(self.spin)
+        else:
+            self.spin = None
+
+        lay.addWidget(QLabel(prompt))
+        self.line_edit = QLineEdit(default_text)
+        self.line_edit.returnPressed.connect(self._do_accept)
+        lay.addWidget(self.line_edit)
+
+        btn_row = QHBoxLayout()
+        btn_ok = QPushButton("CONFIRM")
+        btn_ok.clicked.connect(self._do_accept)
+        btn_cancel = QPushButton("CANCEL")
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_ok)
+        btn_row.addWidget(btn_cancel)
+        lay.addLayout(btn_row)
+
+        self.adjustSize()
+
+        # Drag support
+        self._drag_pos = None
+
+    def _do_accept(self):
+        self._result_text = self.line_edit.text().strip()
+        if self.spin is not None:
+            self._result_number = self.spin.value()
+        self._accepted = True
+        self.accept()
+
+    def result_text(self):
+        return self._result_text
+
+    def result_number(self):
+        return self._result_number
+
+    def was_accepted(self):
+        return self._accepted
+
+    def showEvent(self, event):
+        self.line_edit.setFocus()
+        super().showEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos and event.buttons() == Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+
+
+def _show_canvas_dialog(radar_view, title, prompt, default_text="",
+                        show_number=False,
+                        number_label="Value:", number_value=30.0,
+                        number_min=1.0, number_max=500.0, number_decimals=1):
+    """
+    Helper: create CanvasInputDialog, position it centered over radar_view,
+    and execute it modally. Returns (text, number, accepted).
+    """
+    main_win = radar_view.window()
+    dlg = CanvasInputDialog(
+        title=title, prompt=prompt, default_text=default_text,
+        show_number=show_number,
+        number_label=number_label, number_value=number_value,
+        number_min=number_min, number_max=number_max, number_decimals=number_decimals,
+        parent=main_win,
+    )
+    center_global = radar_view.mapToGlobal(radar_view.rect().center())
+    dlg.move(
+        center_global.x() - dlg.width() // 2,
+        center_global.y() - dlg.height() // 2,
+    )
+    dlg.exec()
+    return dlg.result_text(), dlg.result_number(), dlg.was_accepted()
+
+
 def get_styled_input_text(parent, title, prompt, default_text=""):
+
     dialog = QInputDialog(parent)
     dialog.setWindowTitle(title)
     dialog.setLabelText(prompt)
@@ -690,8 +852,6 @@ class AirspaceNameInput(QDialog):
         if not name:
             name = f"Airspace {len(self.radar_view.airspaces) + 1}"
         self.radar_view.finalize_airspace_naming(name, self.selected_color)
-        from PyQt6.QtWidgets import QApplication
-        QApplication.restoreOverrideCursor()
         super().accept()
 
     def reject(self):
@@ -707,8 +867,6 @@ class AirspaceNameInput(QDialog):
         self.radar_view._temp_airspace_poly = None
         self.radar_view.unsetCursor()
         self.radar_view.viewport().unsetCursor()
-        from PyQt6.QtWidgets import QApplication
-        QApplication.restoreOverrideCursor()
         super().reject()
 
     def showEvent(self, event):

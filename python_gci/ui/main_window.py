@@ -336,13 +336,9 @@ class GCIMainWindow(QMainWindow):
         self.setWindowTitle(f"DCS External GCI (LotATC Lite) - {self.radar.current_theatre} [{c_upper}]")
 
     def toggle_set_bullseye(self):
-        from PyQt6.QtWidgets import QApplication
-        QApplication.setOverrideCursor(Qt.CursorShape.CrossCursor)
         self.radar.toggle_set_bullseye()
 
     def toggle_draw_airspace(self):
-        from PyQt6.QtWidgets import QApplication
-        QApplication.setOverrideCursor(Qt.CursorShape.CrossCursor)
         self.radar.toggle_draw_airspace()
 
     def open_airspace_manager(self):

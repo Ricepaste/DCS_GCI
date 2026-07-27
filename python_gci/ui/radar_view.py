@@ -407,7 +407,7 @@ class RadarView(QGraphicsView):
         # Guard: _temp_airspace_poly must exist; if None, a previous finalize already cleaned up
         if not self._temp_airspace_poly:
             import logging
-            logging.error("[AIRSPACE] finalize_airspace_naming called but _temp_airspace_poly is None — skipped.")
+            logging.error("[AIRSPACE] finalize_airspace_naming called but _temp_airspace_poly is None ??skipped.")
             return
 
         original_name = name
@@ -446,8 +446,6 @@ class RadarView(QGraphicsView):
         self._temp_airspace_poly = None
         self.unsetCursor()
         self.viewport().unsetCursor()
-        from PyQt6.QtWidgets import QApplication
-        QApplication.restoreOverrideCursor()
         
         if hasattr(self, 'main_window') and hasattr(self.main_window, 'manager_panel') and self.main_window.manager_panel:
             self.main_window.manager_panel.list_widget.clear()
@@ -554,8 +552,6 @@ class RadarView(QGraphicsView):
                 self.vector_text.hide()
                 self.unsetCursor()
                 self.viewport().unsetCursor()
-                from PyQt6.QtWidgets import QApplication
-                QApplication.restoreOverrideCursor()
                 
                 if target_grp:
                     cmd = {
@@ -577,8 +573,6 @@ class RadarView(QGraphicsView):
                 self.vector_text.hide()
                 self.unsetCursor()
                 self.viewport().unsetCursor()
-                from PyQt6.QtWidgets import QApplication
-                QApplication.restoreOverrideCursor()
                 if hasattr(self, 'main_window'):
                     self.main_window.statusBar().showMessage("Vectoring cancelled.")
             return
@@ -605,8 +599,6 @@ class RadarView(QGraphicsView):
                 self.attack_text.hide()
                 self.unsetCursor()
                 self.viewport().unsetCursor()
-                from PyQt6.QtWidgets import QApplication
-                QApplication.restoreOverrideCursor()
                 
                 if attacker_grp and target_name:
                     cmd = {
@@ -629,8 +621,6 @@ class RadarView(QGraphicsView):
                 self.attack_text.hide()
                 self.unsetCursor()
                 self.viewport().unsetCursor()
-                from PyQt6.QtWidgets import QApplication
-                QApplication.restoreOverrideCursor()
                 if hasattr(self, 'main_window'):
                     self.main_window.statusBar().showMessage("Attack order cancelled.")
             return
@@ -648,8 +638,6 @@ class RadarView(QGraphicsView):
                     self.main_window.statusBar().showMessage("Bullseye set.")
                 self.unsetCursor()
                 self.viewport().unsetCursor()
-                from PyQt6.QtWidgets import QApplication
-                QApplication.restoreOverrideCursor()
             return
             
         if getattr(self, '_is_drawing_threat_circle', False):
@@ -658,16 +646,22 @@ class RadarView(QGraphicsView):
                 self._is_drawing_threat_circle = False
                 self.unsetCursor()
                 self.viewport().unsetCursor()
-                from PyQt6.QtWidgets import QApplication
-                QApplication.restoreOverrideCursor()
                 
-                radius_nm, ok1 = get_styled_input_double(self, "Custom Threat Ring", "Enter Radius (NM):", 30.0, 1.0, 500.0, 1)
-                if ok1:
-                    label_name, ok2 = get_styled_input_text(self, "Custom Threat Ring", "Enter Threat Label:", default_text="SAM THREAT")
-                    if ok2 and label_name:
-                        self.add_custom_threat_ring(pos, radius_nm, label_name)
-                        if hasattr(self, 'main_window'):
-                            self.main_window.statusBar().showMessage("Custom threat circle added.")
+                from ui.panels import _show_canvas_dialog
+                label, radius_nm, ok = _show_canvas_dialog(
+                    self,
+                    title="CUSTOM THREAT RING",
+                    prompt="Enter Threat Label:",
+                    default_text="SAM THREAT",
+                    show_number=True,
+                    number_label="Radius (NM):",
+                    number_value=30.0,
+                    number_min=1.0, number_max=500.0, number_decimals=1,
+                )
+                if ok and label:
+                    self.add_custom_threat_ring(pos, radius_nm, label)
+                    if hasattr(self, 'main_window'):
+                        self.main_window.statusBar().showMessage("Custom threat circle added.")
             return
 
         if getattr(self, '_is_adding_marker', False):
@@ -676,10 +670,14 @@ class RadarView(QGraphicsView):
                 self._is_adding_marker = False
                 self.unsetCursor()
                 self.viewport().unsetCursor()
-                from PyQt6.QtWidgets import QApplication
-                QApplication.restoreOverrideCursor()
                 
-                m_label, ok = get_styled_input_text(self, "Tactical Marker", "Enter Marker Label:", default_text="MARKER ALPHA")
+                from ui.panels import _show_canvas_dialog
+                m_label, _, ok = _show_canvas_dialog(
+                    self,
+                    title="TACTICAL MARKER",
+                    prompt="Enter Marker Label:",
+                    default_text="MARKER ALPHA",
+                )
                 if ok and m_label:
                     self.add_tactical_marker(pos, label=m_label)
                     if hasattr(self, 'main_window'):
@@ -710,8 +708,6 @@ class RadarView(QGraphicsView):
                     self._is_drawing_airspace = False
                     self.unsetCursor()
                     self.viewport().unsetCursor()
-                    from PyQt6.QtWidgets import QApplication
-                    QApplication.restoreOverrideCursor()
                     
                     poly = QPolygonF(self._current_airspace_pts)
                     pen = QPen(QColor(255, 100, 100), 2)
@@ -759,8 +755,6 @@ class RadarView(QGraphicsView):
                     self._current_airspace_pts = []
                     self.unsetCursor()
                     self.viewport().unsetCursor()
-                    from PyQt6.QtWidgets import QApplication
-                    QApplication.restoreOverrideCursor()
                     if hasattr(self, 'main_window'):
                         self.main_window.statusBar().showMessage("Airspace drawing cancelled (Less than 3 points).")
                 return

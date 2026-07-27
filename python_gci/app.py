@@ -34,7 +34,8 @@ def create_gci_cursor():
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     
-    pen = QPen(QColor(180, 255, 180, 255))
+    # Friendly track color: QColor(50, 255, 50) — must match get_render_color() in radar_view.py
+    pen = QPen(QColor(50, 255, 50, 255))
     pen.setWidth(2)
     painter.setPen(pen)
     

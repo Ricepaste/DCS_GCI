@@ -1,5 +1,7 @@
 from PyQt6.QtWidgets import QMenu
 from PyQt6.QtCore import Qt
+import geometry
+from ui.panels import VectorParamsDialog
 
 def handle_radar_context_menu(radar_view, event, target_name, clicked_items):
     """
@@ -78,7 +80,6 @@ def handle_radar_context_menu(radar_view, event, target_name, clicked_items):
         radar_view.update_tracks()
     elif action == act_vec:
         if is_friendly:
-            from ui.panels import VectorParamsDialog
             curr_alt_ft = 20000
             curr_spd_kts = 350
             track_info = radar_view.track_items.get(target_name, {})
@@ -98,8 +99,6 @@ def handle_radar_context_menu(radar_view, event, target_name, clicked_items):
                 radar_view._vector_target_speed_mps = spd_kts * 0.514444
                 radar_view._is_vectoring_ai = True
                 
-                from PyQt6.QtWidgets import QApplication
-                QApplication.setOverrideCursor(Qt.CursorShape.CrossCursor)
                 radar_view.setCursor(Qt.CursorShape.CrossCursor)
                 radar_view.viewport().setCursor(Qt.CursorShape.CrossCursor)
                 if hasattr(radar_view, 'main_window'):
@@ -111,8 +110,6 @@ def handle_radar_context_menu(radar_view, event, target_name, clicked_items):
         if is_friendly:
             radar_view._attack_attacker_group = grp_name
             radar_view._is_selecting_attack_target = True
-            from PyQt6.QtWidgets import QApplication
-            QApplication.setOverrideCursor(Qt.CursorShape.CrossCursor)
             radar_view.setCursor(Qt.CursorShape.CrossCursor)
             radar_view.viewport().setCursor(Qt.CursorShape.CrossCursor)
             if hasattr(radar_view, 'main_window'):
