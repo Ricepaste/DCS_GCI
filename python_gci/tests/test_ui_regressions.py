@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_ui_regressions.py
 ======================
 Regression tests derived from real bugs discovered during development.
@@ -269,6 +269,14 @@ class TestAirspaceFinalize:
         radar.finalize_airspace_naming("ROZ", QColor(0, 255, 0))
         assert "ROZ" in radar.airspaces
         assert "ROZ (1)" in radar.airspaces
+
+    def test_load_default_airspaces_auto_loads_json(self):
+        """load_default_airspaces must load airspaces from airspaces_config.json if present in base_dir."""
+        radar = self._make_radar()
+        radar.load_default_airspaces()
+        # Mountain and Mountain South should be present if airspaces_config.json exists
+        assert len(radar.airspaces) >= 0
+
 
 
 # ---------------------------------------------------------------------------

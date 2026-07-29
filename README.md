@@ -84,6 +84,8 @@
     * **飛行指定點 (`[V] Direct AI Vector`)**：右鍵點擊任何 AI 航跡並選取目標位置，雷達直接透過 UDP 10089 端口發送 `GoToWaypoint` 任務指令，引導 AI 轉向飛往指定座標點。
     * **預設單位生成 (`[S] Spawn Preset Unit`)**：在地圖空白處右鍵即可選擇生成藍/紅軍預設 CAP (F-16C / Su-27)、CAS (A-10C / Su-25T) 與直升機單位 (AH-64D / Ka-50)，完全相容 DCS 原生 Lua API `coalition.addGroup` 且維持 100% 程式輕量。
   * 重構 **Python GCI GUI 代碼架構 (Modular UI Refactoring)**：將原本 3,290 多行的單一 `app.py` 成功解耦並拆分為 `python_gci/ui/` 模組化結構 (`radar_view.py`, `main_window.py`, `context_menu.py`, `panels.py`)；保持 100% 向後相容性，大幅提升維護性、測試獨立性與 LLM 開發效率。
+  * 修復 **GitHub CI/CD 自動發布與預設空域打包 (CI/CD Release & Airspace Packaging)**：修正 `.github/workflows/release.yml` 與 `build.ps1` 中的 PyInstaller 封裝選項（加入 `--add-data "airspaces_config.json;."` 並補上 Copy 流程），確保 GitHub Release 自動釋出的 ZIP 壓縮包中完整包含預設空域檔 `airspaces_config.json`，開箱即可自動載入地形與空域劃分。
+
 
 ## 📡 DCS 外部戰場監控系統 (External GCI)
 

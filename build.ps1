@@ -15,11 +15,14 @@ if (Test-Path "app.spec") { Remove-Item "app.spec" -Force }
 
 # Run PyInstaller (--onedir avoids Windows Defender false positive malware flags)
 Write-Host "Packaging python_gci into GCI_Client directory..."
-pyinstaller --windowed --onedir --name GCI_Client --collect-all mgrs --collect-all pyproj --add-data "map_data;map_data" app.py
+pyinstaller --windowed --onedir --name GCI_Client --collect-all mgrs --collect-all pyproj --add-data "map_data;map_data" --add-data "airspaces_config.json;." app.py
 
-# Ensure map_data is copied into dist\GCI_Client
+# Ensure map_data and airspaces_config.json are copied into dist\GCI_Client
 if (Test-Path "map_data") {
     Copy-Item -Path "map_data" -Destination "dist\GCI_Client\map_data" -Recurse -Force
+}
+if (Test-Path "airspaces_config.json") {
+    Copy-Item -Path "airspaces_config.json" -Destination "dist\GCI_Client\airspaces_config.json" -Force
 }
 
 # Compress output folder to ZIP
